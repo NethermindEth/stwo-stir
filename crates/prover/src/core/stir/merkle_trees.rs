@@ -1,3 +1,5 @@
+//! Translated from Nethermind STIR's merkle_trees.py
+
 use std::collections::HashMap;
 use blake2::{Blake2s256, Digest};
 use itertools::Itertools;
