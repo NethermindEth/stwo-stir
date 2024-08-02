@@ -1,11 +1,17 @@
+# IDE
 .vscode/*
-*.egg-info
-/data
-/logs
+*/.vscode/*
+.idea/*
+
+# Build
 build
 dist
 target*
-*/.vscode/*
+
+# Others
+*.egg-info
+/data
+/logs
 flamegraph.svg
 perf.data
 perf.data.old

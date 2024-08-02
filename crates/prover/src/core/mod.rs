@@ -16,6 +16,7 @@ pub mod fields;
 pub mod fri;
 pub mod lookups;
 pub mod pcs;
+pub mod stir;
 pub mod poly;
 pub mod proof_of_work;
 pub mod prover;
