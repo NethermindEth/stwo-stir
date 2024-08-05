@@ -1,23 +1,23 @@
 //! Translated from Nethermind STIR's merkle_trees.py
 
 use std::collections::HashMap;
-use blake2::{Blake2s256, Digest};
 use itertools::Itertools;
+use super::*;
 
-pub fn merkelize(l: &[u64]) -> Vec<Vec<u8>> {
-    let mut nodes: Vec<Vec<u8>> = vec![vec![]; l.len()];
-    nodes.extend(l.iter().map(|&x| {
-        let mut res = vec![0; 32];
-        res[24..].copy_from_slice(&x.to_be_bytes());
-        res
-    }));
+pub fn merkelize(l: &[i64]) -> Vec<Vec<u8>> {
+    let mut nodes: Vec<Vec<u8>> = vec![vec![0; 32]; l.len()];
+    nodes.extend(l.iter().map(|&x| to_32_be_bytes(x).to_vec()));
     for i in (1..l.len()).rev() {
-        nodes[i] = blake(&concat_clone(&nodes[i * 2], &nodes[i * 2 + 1]));
+        let x1 = &nodes[i * 2];
+        let x2 = &nodes[i * 2 + 1];
+        let x3 = concat_clone(x1, x2);
+        let x4 = blake(&x3);
+        nodes[i] = x4; //blake(&concat_clone(&nodes[i * 2], &nodes[i * 2 + 1]));
     }
     nodes
 }
 
-fn mk_branch(tree: &[Vec<u8>], index: usize) -> Vec<Vec<u8>> {
+pub fn mk_branch(tree: &[Vec<u8>], index: usize) -> Vec<Vec<u8>> {
     let mut index = index + tree.len() / 2;
     let mut o = vec![tree[index].clone()];
     while index > 1 {
@@ -27,10 +27,10 @@ fn mk_branch(tree: &[Vec<u8>], index: usize) -> Vec<Vec<u8>> {
     o
 }
 
-fn verify_branch(root: &[u8], index: usize, proof: &[Vec<u8>]) -> Vec<u8> {
+pub fn verify_branch(root: &[u8], index: usize, proof: &[&[u8]]) -> Vec<u8> {
     let mut index = index + 2_usize.pow(proof.len() as u32);
-    let mut v = proof[0].clone();
-    for p in &proof[1..] {
+    let mut v = proof[0].to_vec();
+    for &p in &proof[1..] {
         if index % 2 == 0 {
             v = blake(&concat_clone(&v, p));
         } else {
@@ -39,7 +39,7 @@ fn verify_branch(root: &[u8], index: usize, proof: &[Vec<u8>]) -> Vec<u8> {
         index /= 2;
     }
     assert_eq!(v, root);
-    proof[0].clone()
+    proof[0].to_vec()
 }
 
 /// Make a compressed proof for multiple indices
@@ -144,7 +144,7 @@ fn verify_multi_branch(root: &[u8], indices: &[usize], proof: &[Vec<Vec<u8>>]) -
         }
     }
     indices.iter().zip(proof.iter()).map(|(&i, b)| {
-        verify_branch(root, i, b)
+        verify_branch(root, i, b.iter().map(|x| x.as_slice()).collect::<Vec<_>>().as_slice())
     }).collect()
 }
 
@@ -154,10 +154,6 @@ fn _bin_length(proof: &[Vec<Vec<u8>>]) -> usize {
         let concat_len = x.iter().map(|y| y.len()).sum::<usize>();
         concat_len + x.len() / 8
     }).sum::<usize>() + proof.len() * 2
-}
-
-fn blake(x: &[u8]) -> Vec<u8> {
-    Blake2s256::digest(x).to_vec()
 }
 
 fn concat_clone<T: Clone>(slice_1: &[T], slice_2: &[T]) -> Vec<T> {
@@ -173,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_multi_merkle_tree() {
-        let tree = merkelize(&(0..16).collect::<Vec<u64>>());
+        let tree = merkelize(&(0..16).collect::<Vec<i64>>());
         for i in 0..65536 {
             let indices: Vec<usize> = (0..16).filter(|&j| (i >> j) % 2 == 1).collect();
             let branch = mk_multi_branch(&tree, &indices);

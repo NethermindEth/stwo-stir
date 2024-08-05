@@ -12,7 +12,7 @@ pub struct PrimeField {
 #[allow(dead_code)]
 impl PrimeField {
     pub fn new(modulus: u32) -> Self {
-        assert_eq!(pow_mod(2_u64, modulus, modulus as u64), 2);
+        assert_eq!(pow_mod(2_i64, modulus, modulus), 2);
         Self { modulus }
     }
 
@@ -20,24 +20,24 @@ impl PrimeField {
         self.modulus
     }
 
-    fn add(&self, x: i64, y: i64) -> i64 {
-        (x + y) % (self.modulus as i64)
+    pub fn add(&self, x: i64, y: i64) -> i64 {
+        (x + y).rem_euclid(self.modulus as i64)
     }
 
-    fn sub(&self, x: i64, y: i64) -> i64 {
-        (x + y) % (self.modulus as i64)
+    pub fn sub(&self, x: i64, y: i64) -> i64 {
+        (x + y).rem_euclid(self.modulus as i64)
     }
 
-    fn mul(&self, x: i64, y: i64) -> i64 {
-        (x * y) % (self.modulus as i64)
+    pub fn mul(&self, x: i64, y: i64) -> i64 {
+        (x.rem_euclid(self.modulus as i64) * y.rem_euclid(self.modulus as i64)).rem_euclid(self.modulus as i64)
     }
 
-    fn prod(&self, factors: &[i64]) -> i64 {
+    pub fn prod(&self, factors: &[i64]) -> i64 {
         factors.iter().fold(1, |acc, &f| self.mul(acc, f))
     }
 
     // can be simplified using the formula
-    fn geom_sum(&self, x: i64, p: u64) -> i64 {
+    pub fn geom_sum(&self, x: i64, p: u64) -> i64 {
         let mut ans = 1;
         let mut prod = 1;
         for _ in 0..p {
@@ -47,26 +47,23 @@ impl PrimeField {
         ans
     }
 
-    fn exp(&self, x: u64, p: u32) -> u64 {
-        pow_mod(x, p, self.modulus as u64)
+    pub fn exp(&self, x: i64, p: u32) -> i64 {
+        pow_mod(x, p, self.modulus)
     }
 
     /// Modular inverse using the extended Euclidean algorithm
-    fn inv(&self, a: i64) -> i64 {
+    pub fn inv(&self, a: i64) -> i64 {
         let (mut lm, mut hm) = (1, 0);
-        let (mut low, mut high) = (a % (self.modulus as i64), self.modulus as i64);
+        let (mut low, mut high) = (a.rem_euclid(self.modulus as i64), self.modulus as i64);
         if low == 0 {
             panic!("ZeroDivisionError");
         }
         while low > 1 {
             let r = high / low;
             let (nm, new) = (hm - lm * r, high - low * r);
-            lm = nm;
-            low = new;
-            hm = lm;
-            high = low;
+            (lm, low, hm, high) = (nm, new, lm, low);
         }
-        lm % (self.modulus as i64)
+        lm.rem_euclid(self.modulus as i64)
     }
 
     fn multi_inv(&self, values: &[i64]) -> Vec<i64> {
@@ -84,19 +81,19 @@ impl PrimeField {
         outputs
     }
 
-    fn div(&self, x: i64, y: i64) -> i64 {
+    pub fn div(&self, x: i64, y: i64) -> i64 {
         self.mul(x, self.inv(y))
     }
 
     /// Evaluate a polynomial at a point
-    fn eval_poly_at(&self, p: &[i64], x: i64) -> i64 {
+    pub fn eval_poly_at(&self, p: &[i64], x: i64) -> i64 {
         let mut y = 0;
         let mut power_of_x = 1;
         for &p_coeff in p {
             y += power_of_x * p_coeff;
-            power_of_x = (power_of_x * x) % (self.modulus as i64);
+            power_of_x = (power_of_x * x).rem_euclid(self.modulus as i64);
         }
-        y % (self.modulus as i64)
+        y.rem_euclid(self.modulus as i64)
     }
 
     /// Arithmetic for polynomials
@@ -104,7 +101,7 @@ impl PrimeField {
         (0..std::cmp::max(a.len(), b.len()))
             .map(|i| {
                 ((if i < a.len() { a[i] } else { 0 }) + (if i < b.len() { b[i] } else { 0 }))
-                    % (self.modulus as i64)
+                   .rem_euclid(self.modulus as i64)
             })
             .collect()
     }
@@ -113,13 +110,13 @@ impl PrimeField {
         (0..std::cmp::max(a.len(), b.len()))
             .map(|i| {
                 ((if i < a.len() { a[i] } else { 0 }) - (if i < b.len() { b[i] } else { 0 }))
-                    % (self.modulus as i64)
+                   .rem_euclid(self.modulus as i64)
             })
             .collect()
     }
 
-    fn mul_by_const(&self, a: &[i64], c: i64) -> Vec<i64> {
-        a.iter().map(|&x| (x * c) % (self.modulus as i64)).collect()
+    pub fn mul_by_const(&self, a: &[i64], c: i64) -> Vec<i64> {
+        a.iter().map(|&x| (x * c).rem_euclid(self.modulus as i64)).collect()
     }
 
     fn mul_polys(&self, a: &[i64], b: &[i64]) -> Vec<i64> {
@@ -129,7 +126,7 @@ impl PrimeField {
                 o[i + j] += aval * bval;
             }
         }
-        o.iter().map(|&x| x % (self.modulus as i64)).collect()
+        o.iter().map(|&x| x.rem_euclid(self.modulus as i64)).collect()
     }
 
     fn div_polys(&self, a: &[i64], b: &[i64]) -> Vec<i64> {
@@ -148,7 +145,7 @@ impl PrimeField {
             apos -= 1;
             diff -= 1;
         }
-        o.iter().map(|&x| x % (self.modulus as i64)).collect()
+        o.iter().map(|&x| x.rem_euclid(self.modulus as i64)).collect()
     }
 
     fn mod_polys(&self, a: &[i64], b: &[i64]) -> Vec<i64> {
@@ -159,7 +156,7 @@ impl PrimeField {
     fn sparse(&self, coeff_dict: &HashMap<usize, i64>) -> Vec<i64> {
         let mut o = vec![0; *coeff_dict.keys().max().unwrap() + 1];
         for (&k, &v) in coeff_dict {
-            o[k] = v % (self.modulus as i64);
+            o[k] = v.rem_euclid(self.modulus as i64);
         }
         o
     }
@@ -169,10 +166,10 @@ impl PrimeField {
         for &x in xs {
             root.insert(0, 0);
             for j in 0..root.len() - 1 {
-                root[j] -= root[j + 1] * x;
+                root[j] = (root[j] - (root[j + 1] * x)).rem_euclid(self.modulus as i64);
             }
         }
-        root.iter().map(|&x| x % (self.modulus as i64)).collect()
+        root.iter().map(|&x| x.rem_euclid(self.modulus as i64)).collect()
     }
 
     /// Given p+1 y values and x values with no errors, recovers the original
@@ -182,7 +179,7 @@ impl PrimeField {
     /// 2. For each x, generate a polynomial which equals its corresponding
     ///    y coordinate at that point and 0 at all other points provided.
     /// 3. Add these polynomials together.
-    fn lagrange_interp(&self, xs: &[i64], ys: &[i64]) -> Vec<i64> {
+    pub fn lagrange_interp(&self, xs: &[i64], ys: &[i64]) -> Vec<i64> {
         // Generate master numerator polynomial, eg. (x - x1) * (x - x2) * ... * (x - xn)
         let root = self.zpoly(xs);
         assert_eq!(root.len(), ys.len() + 1);
@@ -200,18 +197,18 @@ impl PrimeField {
             let yslice = self.mul(ys[i], invdenoms[i]);
             for j in 0..ys.len() {
                 if nums[i][j] != 0 && ys[i] != 0 {
-                    b[j] += nums[i][j] * yslice;
+                    b[j] = (b[j] + nums[i][j] * yslice).rem_euclid(self.modulus as i64);
                 }
             }
         }
-        b.iter().map(|&x| x % (self.modulus as i64)).collect()
+        b.iter().map(|&x| x.rem_euclid(self.modulus as i64)).collect()
     }
 
     /// Optimized poly evaluation for degree 4
     fn eval_quartic(&self, p: &[i64], x: i64) -> i64 {
-        let xsq = x * x % (self.modulus as i64);
-        let xcb = xsq * x % (self.modulus as i64);
-        (p[0] + p[1] * x + p[2] * xsq + p[3] * xcb) % (self.modulus as i64)
+        let xsq = x * x.rem_euclid(self.modulus as i64);
+        let xcb = xsq * x.rem_euclid(self.modulus as i64);
+        (p[0] + p[1] * x + p[2] * xsq + p[3] * xcb).rem_euclid(self.modulus as i64)
     }
 
     /// Optimized version of the above restricted to deg-4 polynomials
@@ -400,7 +397,7 @@ impl PrimeField {
         }
         let slope = self.div(pt1.y - pt2.y, dx);
         vec![
-            vec![(pt1.y - slope * pt1.x) % self.modulus as i64, slope],
+            vec![(pt1.y - slope * pt1.x).rem_euclid(self.modulus as i64), slope],
             vec![self.modulus as i64 - 1],
         ]
     }
