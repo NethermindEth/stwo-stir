@@ -164,15 +164,11 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         assert_eq!((params.ood_rep + params.repetition_params[i - 1]).rem_euclid(2), 0);
 
-        let rs: Vec<Gaussian> = r_outs
-            .iter()
-            .cloned()
+        let rs: Vec<Gaussian> = r_outs.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
                 .map(|(&t, &k)| f.mul(p_offset, f.exp(rt2, t as u32)).conj(k as u32).rem_euclid(params.modulus)))
             .collect_vec();
-        let g_rs: Vec<i64> = betas
-            .iter()
-            .cloned()
+        let g_rs: Vec<i64> = betas.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
                 .map(|(&t, &k)| g_hat[t + k * folded_len]))
             .collect_vec();
@@ -246,8 +242,6 @@ fn make_oracle_branches(
 }
 
 fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
-    todo!()
-    /*
     macro_rules! reject_unless_eq {
         ($lhs:expr,$rhs:expr) => { if $lhs != $rhs { return false; } };
     }
@@ -259,19 +253,24 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
 
     let mut rt = params.root_of_unity;
 
-    reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32), 1);
-    reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32 / 2), params.modulus as i64 - 1);
+    reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32), Gaussian::ONE);
+    reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32 / 2), Gaussian::new(params.modulus as i64 - 1, 0));
 
     let mut proof_pos = 0;
     let m_root = &proof.0[proof_pos..(proof_pos + 32)];
     proof_pos += 32;
-    let mut r_fold = BigInt::from_bytes_be(Sign::Plus, m_root)
-        .rem_euclid(&BigInt::from(params.modulus))
-        .to_i64().unwrap();
+    let mut r_fold =
+        f.exp(
+            params.prim_root,
+            BigInt::from_bytes_be(Sign::Plus, m_root)
+                .rem_euclid(&BigInt::from(params.modulus + 1))
+                .to_u32().unwrap(),
+        );
 
-    let mut pol: Option<Vec<i64>> = None;
-    let mut rs: Option<Vec<i64>> = None;
-    let mut r_comb: Option<i64> = None;
+    let mut pol: Option<Vec<Vec<i64>>> = None;
+    let mut rs: Option<Vec<Gaussian>> = None;
+    let mut zpol: Option<Vec<Vec<i64>>> = None;
+    let mut r_comb: Option<Gaussian> = None;
     let mut m_root: Option<&[u8]> = None;
 
     for i in 1..params.folding_params.len() {
@@ -289,10 +288,9 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
         let m2_root = &proof.0[proof_pos..proof_pos + 32];
         proof_pos += 32;
 
-        let r_outs = get_pseudorandom_element_outside_coset(
-            &proof.0[..proof_pos], params.modulus, params.prim_root as i64,
+        let r_outs = get_pseudorandom_element_outside_coset_circle(
+            &proof.0[..proof_pos], params.modulus, params.prim_root,
             params.eval_sizes[i], params.eval_offsets[i], params.ood_rep,
-            false,
         );
         let betas: Vec<i64> = (0_usize..params.ood_rep).map(|j| {
             BigInt::from_bytes_be(Sign::Plus, &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)])
@@ -301,15 +299,19 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
         }).collect();
         proof_pos += params.ood_rep * 32;
 
-        let r_fold_new = get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus, 1, 0)[0] as i64;
-        let r_comb_new = get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus - 1, 1, 1)[0] as i64 + 1;
-        let t_shifts = get_pseudorandom_indices(&proof.0[..proof_pos], folded_len as u32, params.repetition_params[i - 1], 2);
-        let rs_new: Vec<i64> = r_outs.iter().cloned()
-            .chain(t_shifts.iter().map(|&t| f.mul(p_offset, f.exp(rt2, t as u32))))
-            .collect();
+        let r_fold_new = f.exp(params.prim_root, get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 0, &mut vec![])[0] as u32);
+        let r_comb_new = f.exp(params.prim_root, get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 1, &mut vec![])[0] as u32);
+
+        let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
+        let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
+        let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
+        let rs_new: Vec<Gaussian> = r_outs.iter().cloned()
+            .chain(t_shifts.iter().zip(t_conj.iter())
+                .map(|(&t, &k)| f.mul(p_offset, f.exp(rt2, t as u32)).conj(k as u32).rem_euclid(params.modulus)))
+            .collect_vec();
 
         // should we change to storing the log since it should always be a power of 2?
-        let branch_len = (params.eval_sizes[i - 1] as f64).log2().ceil() as usize + 1;
+        let branch_len = (params.eval_sizes[i - 1] as f64).log2().ceil() as usize + 2;
         let num_branches = params.folding_params[i - 1] * params.repetition_params[i - 1];
         let oracle_data: Vec<&[u8]> = (0_usize..(branch_len * num_branches)).map(|j| {
             &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)]
@@ -319,53 +321,69 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
             oracle_data[(j * branch_len)..((j + 1) * branch_len)].to_vec()
         }).collect();
 
+        let rt2 = f.exp(rt, folded_len as u32);
+        let xs2s = {
+            let mut res = vec![get_power_cycle(rt2, params.modulus, Gaussian::new(1, 0))];
+            res.push(res[0].clone());
+            (&mut res[1][1..]).reverse();
+            res
+        };
+
         let mut g_hat = vec![];
         for k in 0_usize..params.repetition_params[i - 1] {
             let mut vals = vec![];
-            let mut xs = vec![];
+            let x0 = f.mul(f.exp(rt, t_shifts[k] as u32), params.eval_offsets[i - 1])
+                .conj(t_conj[k] as u32)
+                .rem_euclid(params.modulus);
             for j in 0_usize..params.folding_params[i - 1] {
                 let branch = &oracle_branches[k * params.folding_params[i - 1] + j];
                 let ind = t_shifts[k] + j * folded_len;
                 if let Some(m_root) = m_root {
-                    verify_branch(m_root, ind, &branch);
+                    verify_branch(m_root, ind + t_conj[k] * params.eval_sizes[i - 1], &branch);
                 }
                 let val = BigInt::from_bytes_be(Sign::Plus, branch[0])
                     .rem_euclid(&BigInt::from(params.modulus))
                     .to_i64().unwrap();
 
-                let x = f.mul(f.exp(rt, ind as u32), params.eval_offsets[i - 1]);
-                xs.push(x);
                 let new_val = match pol {
                     Some(ref pol) => {
                         let rs = rs.as_ref().unwrap();
                         let r_comb = r_comb.unwrap();
-                        f.mul(f.div(val - f.eval_poly_at(&pol, x),
-                                    f.prod(&rs.iter().map(|&r| x - r).collect_vec())),
-                              f.geom_sum(x * r_comb, rs.len() as u64))
+                        let zpol = zpol.as_ref().unwrap();
+
+                        let x = f.mul(f.exp(rt, ind as u32), params.eval_offsets[i - 1])
+                            .conj(t_conj[k] as u32)
+                            .rem_euclid(params.modulus);
+
+                        f.mul(f.div(val - f.eval_circ_poly_at(pol, x),
+                                    f.eval_circ_poly_at(zpol, x)),
+                              f.geom_sum((x * r_comb).x, rs.len() as u64))
                     }
                     None => val,
                 };
                 vals.push(new_val);
             }
-            g_hat.push(f.eval_poly_at(&f.lagrange_interp(&xs, &vals), r_fold));
+            let new_g_hat = f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), f.mul(r_fold, x0.conj(1)));
+            g_hat.push(new_g_hat);
         }
 
         rt = rt_new;
         m_root = Some(m2_root);
         r_fold = r_fold_new;
         r_comb = Some(r_comb_new);
-        rs = Some(rs_new);
+        zpol = Some(f.circ_zpoly(&rs_new, None));
         let g_rs = betas.iter().cloned().chain(g_hat.iter().cloned()).collect_vec();
-        pol = Some(f.lagrange_interp(rs.as_ref().unwrap(), &g_rs));
+        pol = Some(f.circ_lagrange_interp(&rs_new, &g_rs, false));
+        rs = Some(rs_new);
     }
 
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
-    let g_pol: Vec<i64> = (0..final_deg).map(|j| {
+    let g_pol: Vec<i64> = (0..(2 * final_deg + 1)).map(|j| {
         BigInt::from_bytes_be(Sign::Plus, &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)])
             .rem_euclid(&BigInt::from(params.modulus))
             .to_i64().unwrap()
     }).collect();
-    proof_pos += final_deg * 32;
+    proof_pos += (2 * final_deg + 1) * 32;
 
     let last_eval_size = *params.eval_sizes.last().unwrap();
     let last_eval_offset = *params.eval_offsets.last().unwrap();
@@ -375,10 +393,13 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
     reject_unless_eq!(last_eval_size % last_folding_param, 0);
     let folded_len = last_eval_size / last_folding_param;
     let rt2 = f.exp(rt, last_folding_param as u32);
-    let t_shifts = get_pseudorandom_indices(&proof.0[..proof_pos], folded_len as u32, last_repetition_param, 0);
+
+    let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
+    let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
+    let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
 
     // Warning: code below copy-and-pasted from inside main loop
-    let branch_len = (last_eval_size as f64).log2().ceil() as usize + 1;
+    let branch_len = (last_eval_size as f64).log2().ceil() as usize + 2;
     let num_branches = last_folding_param * last_repetition_param;
     let oracle_data: Vec<&[u8]> =
         (0..(branch_len * num_branches)).map(|j| &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)]).collect();
@@ -388,30 +409,45 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
     }).collect();
 
     let rs = rs.as_ref().unwrap();
+
+    let rt3 = f.exp(rt, folded_len as u32);
+    let xs2s = {
+        let mut res = vec![get_power_cycle(rt3, params.modulus, Gaussian::new(1, 0))];
+        res.push(res[0].clone());
+        (&mut res[1][1..]).reverse();
+        res
+    };
+
     for k in 0_usize..last_repetition_param {
         let mut vals = vec![];
-        let mut xs = vec![];
+        let x0 = f.mul(f.exp(rt, t_shifts[k] as u32), last_eval_offset)
+            .conj(t_conj[k] as u32)
+            .rem_euclid(params.modulus);
         for j in 0..last_folding_param {
             let branch = &oracle_branches[k * last_folding_param + j];
             let ind = t_shifts[k] + j * folded_len;
-            verify_branch(m_root.as_ref().unwrap(), ind, branch);
+            verify_branch(m_root.as_ref().unwrap(), ind + t_conj[k] * last_eval_size, branch);
             let val = BigInt::from_bytes_be(Sign::Plus, branch[0])
                 .rem_euclid(&BigInt::from(params.modulus))
                 .to_i64().unwrap();
 
-            let x = f.mul(f.exp(rt, ind as u32), last_eval_offset);
-            xs.push(x);
-            vals.push(f.mul(f.div(val - f.eval_poly_at(&pol.as_ref().unwrap(), x),
-                                  f.prod(&rs.iter().map(|&r| x - r).collect_vec())),
-                            f.geom_sum(x * r_comb.unwrap(), rs.len() as u64)));
+            let x = f.mul(f.exp(rt, ind as u32), last_eval_offset)
+                .conj(t_conj[k] as u32)
+                .rem_euclid(params.modulus);
+            vals.push(f.mul(f.div(val - f.eval_circ_poly_at(&pol.as_ref().unwrap(), x),
+                                  f.eval_circ_poly_at(zpol.as_ref().unwrap(), x)),
+                            f.geom_sum((x * r_comb.unwrap()).x, rs.len() as u64)));
         }
-        reject_unless_eq!(f.eval_poly_at(&f.lagrange_interp(&xs, &vals), r_fold),
-                          f.eval_poly_at(&g_pol, f.exp(rt2, t_shifts[k] as u32)));
+
+        reject_unless_eq!(f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), f.mul(r_fold, x0.conj(1))),
+                          fft_inv(&g_pol, params.modulus, Gaussian::new(1,0),
+                                  f.mul(f.exp(rt2, t_shifts[k] as u32), f.exp(last_eval_offset, last_folding_param as u32))
+                                      .conj(t_conj[k] as u32)
+                                      .rem_euclid(params.modulus))[0]);
     }
 
     println!("STIR proof verified");
     true
-    */
 }
 
 fn get_pseudorandom_element_outside_coset_circle(
