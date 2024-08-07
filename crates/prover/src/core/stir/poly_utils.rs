@@ -1,7 +1,9 @@
 //! Translated from Nethermind STIR's poly_utils.py
 
 use std::collections::HashMap;
+use std::ops::{Mul};
 use super::*;
+use super::gaussian::*;
 
 /// An object that includes convenience operations for numbers
 /// and polynomials in some prime field
@@ -12,7 +14,7 @@ pub struct PrimeField {
 #[allow(dead_code)]
 impl PrimeField {
     pub fn new(modulus: u32) -> Self {
-        assert_eq!(pow_mod(2_i64, modulus, modulus), 2);
+        assert_eq!(2_i64.pow_mod(modulus, modulus), 2);
         Self { modulus }
     }
 
@@ -25,11 +27,11 @@ impl PrimeField {
     }
 
     pub fn sub(&self, x: i64, y: i64) -> i64 {
-        (x + y).rem_euclid(self.modulus as i64)
+        (x - y).rem_euclid(self.modulus as i64)
     }
 
-    pub fn mul(&self, x: i64, y: i64) -> i64 {
-        (x.rem_euclid(self.modulus as i64) * y.rem_euclid(self.modulus as i64)).rem_euclid(self.modulus as i64)
+    pub fn mul<T: Mul<Output = T> + RemEuclid>(&self, x: T, y: T) -> T {
+        (x.rem_euclid(self.modulus) * y.rem_euclid(self.modulus)).rem_euclid(self.modulus)
     }
 
     pub fn prod(&self, factors: &[i64]) -> i64 {
@@ -47,23 +49,13 @@ impl PrimeField {
         ans
     }
 
-    pub fn exp(&self, x: i64, p: u32) -> i64 {
-        pow_mod(x, p, self.modulus)
+    pub fn exp<T: PowMod>(&self, x: T, p: u32) -> T {
+        x.pow_mod(p, self.modulus)
     }
 
     /// Modular inverse using the extended Euclidean algorithm
     pub fn inv(&self, a: i64) -> i64 {
-        let (mut lm, mut hm) = (1, 0);
-        let (mut low, mut high) = (a.rem_euclid(self.modulus as i64), self.modulus as i64);
-        if low == 0 {
-            panic!("ZeroDivisionError");
-        }
-        while low > 1 {
-            let r = high / low;
-            let (nm, new) = (hm - lm * r, high - low * r);
-            (lm, low, hm, high) = (nm, new, lm, low);
-        }
-        lm.rem_euclid(self.modulus as i64)
+        inv(a, self.modulus)
     }
 
     fn multi_inv(&self, values: &[i64]) -> Vec<i64> {
@@ -90,7 +82,7 @@ impl PrimeField {
         let mut y = 0;
         let mut power_of_x = 1;
         for &p_coeff in p {
-            y += power_of_x * p_coeff;
+            y = y + power_of_x * p_coeff;
             power_of_x = (power_of_x * x).rem_euclid(self.modulus as i64);
         }
         y.rem_euclid(self.modulus as i64)
@@ -101,7 +93,7 @@ impl PrimeField {
         (0..std::cmp::max(a.len(), b.len()))
             .map(|i| {
                 ((if i < a.len() { a[i] } else { 0 }) + (if i < b.len() { b[i] } else { 0 }))
-                   .rem_euclid(self.modulus as i64)
+                    .rem_euclid(self.modulus as i64)
             })
             .collect()
     }
@@ -110,7 +102,7 @@ impl PrimeField {
         (0..std::cmp::max(a.len(), b.len()))
             .map(|i| {
                 ((if i < a.len() { a[i] } else { 0 }) - (if i < b.len() { b[i] } else { 0 }))
-                   .rem_euclid(self.modulus as i64)
+                    .rem_euclid(self.modulus as i64)
             })
             .collect()
     }
@@ -369,11 +361,6 @@ impl PrimeField {
 
     /// Multiply two circular polynomials
     fn mul_circ_polys(&self, a: &[Vec<i64>], b: &[Vec<i64>]) -> Vec<Vec<i64>> {
-        /*
-        a1b1=self.mul_polys(a[1],b[1])
-        return [self.sub_polys(self.add_polys(self.mul_polys(a[0],b[0]), a1b1), [0,0] + a1b1),
-                self.add_polys(self.mul_polys(a[0],b[1]), self.mul_polys(a[1],b[0]))]
-         */
         let a1b1 = self.mul_polys(&a[1], &b[1]);
         vec![
             self.sub_polys(
@@ -385,12 +372,12 @@ impl PrimeField {
     }
 
     /// Evaluate a circular polynomial at a point
-    fn eval_circ_poly_at(&self, p: &[Vec<i64>], pt: &Point) -> i64 {
+    pub fn eval_circ_poly_at(&self, p: &[Vec<i64>], pt: Gaussian) -> i64 {
         self.add(self.eval_poly_at(&p[0], pt.x), self.eval_poly_at(&p[1], pt.x) * pt.y)
     }
 
     /// Create a line polynomial between two points
-    fn line(&self, pt1: &Point, pt2: &Point) -> Vec<Vec<i64>> {
+    fn line(&self, pt1: Gaussian, pt2: Gaussian) -> Vec<Vec<i64>> {
         let dx = self.sub(pt1.x, pt2.x);
         if dx == 0 {
             return vec![vec![pt1.x, self.modulus as i64 - 1], vec![]];
@@ -403,10 +390,10 @@ impl PrimeField {
     }
 
     /// Build a circular polynomial that returns 0 at all specified points
-    fn circ_zpoly(&self, pts: &[Point], nzero: Option<&Point> /* default = None */) -> Vec<Vec<i64>> {
+    pub fn circ_zpoly(&self, pts: &[Gaussian], nzero: Option<&Gaussian> /* default = None */) -> Vec<Vec<i64>> {
         let mut ans = vec![vec![1], vec![]];
         for i in 0..pts.len() / 2 {
-            ans = self.mul_circ_polys(&ans, &self.line(&pts[2 * i], &pts[2 * i + 1]));
+            ans = self.mul_circ_polys(&ans, &self.line(pts[2 * i], pts[2 * i + 1]));
         }
         if pts.len() % 2 == 1 {
             match nzero {
@@ -422,12 +409,12 @@ impl PrimeField {
     }
 
     /// Circular Lagrange interpolation
-    fn circ_lagrange_interp(&self, pts: &[Point], vals: &[i64], normalize: bool /* default = false */) -> Vec<Vec<i64>> {
+    pub fn circ_lagrange_interp(&self, pts: &[Gaussian], vals: &[i64], normalize: bool /* default = false */) -> Vec<Vec<i64>> {
         assert_eq!(pts.len(), vals.len());
         let mut ans = vec![vec![], vec![]];
         for i in 0..pts.len() {
             let pol = self.circ_zpoly(&[&pts[..i], &pts[i + 1..]].concat(), Some(&pts[i]));
-            let scale = self.div(vals[i], self.eval_circ_poly_at(&pol, &pts[i]));
+            let scale = self.div(vals[i], self.eval_circ_poly_at(&pol, pts[i]));
             ans = self.add_circ_polys(&ans, &self.mul_circ_by_const(&pol, scale));
         }
         if normalize && pts.len() % 2 == 0 {

@@ -1,25 +1,28 @@
 //! This is the implementation of an original STIR (non-circle) algorithm from scratch,
 //! moved from Pyhton trying to keep it close to the original implementation.
+#![allow(dead_code, unused)]
 
+use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
-use num_traits::ToPrimitive;
+use num_traits::{ConstOne, ToPrimitive};
 use super::*;
-use super::fft::*;
+use super::circle_fft::*;
 use super::merkle_trees::*;
 use super::poly_utils::*;
+use super::gaussian::*;
 
 #[allow(dead_code)]
 #[derive(Debug)]
 struct Parameters {
-    root_of_unity: i64,
+    root_of_unity: Gaussian,
     maxdeg_plus_1: u32,
     folding_params: Vec<usize>,
-    eval_offsets: Vec<i64>,
+    eval_offsets: Vec<Gaussian>,
     eval_sizes: Vec<usize>,
     repetition_params: Vec<usize>,
     ood_rep: usize,
     modulus: u32,
-    prim_root: u32,
+    prim_root: Gaussian,
 }
 
 #[derive(Debug)]
@@ -49,16 +52,24 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
     let mut vals = values.to_vec();
     // Calculate the set of x coordinates
     let mut xs = get_power_cycle(rt, params.modulus, params.eval_offsets[0]);
+    {
+        let xs_added =
+            xs.iter().cloned().map(|x| x.conj(1).rem_euclid(params.modulus)).collect_vec();
+        xs.extend(&xs_added);
+    }
     assert_eq!(values.len(), xs.len());
-    assert_eq!(values.len(), params.eval_sizes[0] as usize);
+    assert_eq!(values.len(), params.eval_sizes[0] * 2);
 
     // Put the values into a Merkle tree. This is the root that the
     // proof will be checked against
     let mut m = merkelize(&vals);
 
     // Select a pseudo-random field element
-    let mut r_fold = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(params.modulus)).to_i64().unwrap();
-
+    // r_fold = f.exp(prim_root, int.from_bytes(m[1], 'big') % (modulus + 1))
+    let mut r_fold = {
+        let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(params.modulus + 1)).to_u32().unwrap();
+        f.exp(params.prim_root, pow)
+    };
     output.extend_from_slice(&m[1]);
 
     let mut last_g_hat: Option<Vec<i64>> = None;
@@ -69,20 +80,39 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
         assert_eq!(params.eval_sizes[i - 1].rem_euclid(params.folding_params[i - 1]), 0);
         let folded_len = params.eval_sizes[i - 1] / params.folding_params[i - 1];
         last_folded_len = Some(folded_len);
+
         // should replace lagrange_interp with an fft?
-        let x_polys: Vec<Vec<i64>> = (0..folded_len)
-            .map(|k| {
-                f.lagrange_interp(
-                    &(0..params.folding_params[i - 1])
-                        .map(|j| xs[k + folded_len * j])
-                        .collect::<Vec<_>>(),
-                    &(0..params.folding_params[i - 1])
-                        .map(|j| vals[k + folded_len * j])
-                        .collect::<Vec<_>>(),
-                )
+        let rt2 = f.exp(rt, folded_len as u32);
+        let xs2s = {
+            let mut res = vec![get_power_cycle(rt2, params.modulus, Gaussian::new(1, 0))];
+            res.push(res[0].clone());
+            (&mut res[1][1..]).reverse();
+            res
+        };
+
+        let x_polys: Vec<Vec<Vec<i64>>> =
+            (0..=1).flat_map(|l| {
+                (0..folded_len).map(|k| {
+                    let temp = f.circ_lagrange_interp(
+                        &xs2s[l],
+                        &(0..params.folding_params[i - 1])
+                            .map(|j| vals[k + folded_len * j + params.eval_sizes[i - 1] * l])
+                            .collect_vec(),
+                        true,
+                    );
+                    temp
+                }).collect_vec()
             })
-            .collect();
-        let g_hat: Vec<i64> = x_polys.iter().map(|p| f.eval_poly_at(p, r_fold)).collect();
+                .collect_vec();
+
+        let g_hat: Vec<i64> =
+            (0..=1).flat_map(|l| {
+                (0..folded_len).map(|k| {
+                    let mul = f.mul(r_fold, xs[k + params.eval_sizes[i - 1] * l].conj(1));
+                    f.eval_circ_poly_at(&x_polys[k + folded_len * l], mul)
+                }).collect_vec()
+            })
+                .collect_vec();
         last_g_hat = Some(g_hat.clone());
 
         if i == params.folding_params.len() {
@@ -97,100 +127,118 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
         rt = f.exp(rt, eval_size_scale as u32);
         let rt2 = f.exp(rt, expand_factor as u32);
         let p_offset = f.exp(params.eval_offsets[i - 1], params.folding_params[i - 1] as u32);
-        let inv_offset = f.inv(p_offset as i64);
+
         let g_hat_shift = shift_domain(
             &g_hat,
             params.modulus,
             rt,
-            f.mul(params.eval_offsets[i], inv_offset),
+            p_offset,
+            params.eval_offsets[i],
             expand_factor as u32,
         );
         let m2 = merkelize(&g_hat_shift);
         output.extend_from_slice(&m2[1]);
 
         xs = get_power_cycle(rt, params.modulus, params.eval_offsets[i]);
+        xs.extend(xs.iter().map(|x| x.conj(1)).collect_vec());
 
-        let r_outs = get_pseudorandom_element_outside_coset(
+        let r_outs = get_pseudorandom_element_outside_coset_circle(
             &output,
             params.modulus,
-            params.prim_root as i64,
+            params.prim_root,
             params.eval_sizes[i],
             params.eval_offsets[i],
             params.ood_rep,
-            false,
         );
 
         let betas: Vec<i64> = r_outs
             .iter()
-            .map(|&r| inv_fft_at_point(&g_hat, params.modulus, rt2, f.mul(r, inv_offset)))
-            .collect();
+            .map(|&r| inv_fft_at_point(&g_hat, params.modulus, rt2, p_offset, r))
+            .collect_vec();
         output.extend(betas.iter().flat_map(|&b| to_32_be_bytes(b)));
 
-        r_fold = get_pseudorandom_indices(&output, params.modulus, 1, 0)[0] as i64;
-        // DegCor doesn't work well if the parameter is 0
-        let r_comb = get_pseudorandom_indices(&output, params.modulus - 1, 1, 1)[0] + 1;
-        let t_shifts = get_pseudorandom_indices(&output, folded_len as u32, params.repetition_params[i - 1], 2);
+        r_fold = f.exp(params.prim_root, get_pseudorandom_indices(&output, params.modulus + 1, 1, 0, &mut vec![])[0] as u32);
+        let r_comb = f.exp(params.prim_root, get_pseudorandom_indices(&output, params.modulus + 1, 1, 1, &mut vec![])[0] as u32);
+        let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
+        let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
+        let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
+        assert_eq!((params.ood_rep + params.repetition_params[i - 1]).rem_euclid(2), 0);
 
-        let rs: Vec<i64> = r_outs
+        let rs: Vec<Gaussian> = r_outs
             .iter()
             .cloned()
-            .chain(t_shifts.iter().map(|&t| f.mul(p_offset, f.exp(rt2, t as u32))))
-            .collect();
+            .chain(t_shifts.iter().zip(t_conj.iter())
+                .map(|(&t, &k)| f.mul(p_offset, f.exp(rt2, t as u32)).conj(k as u32).rem_euclid(params.modulus)))
+            .collect_vec();
         let g_rs: Vec<i64> = betas
             .iter()
             .cloned()
-            .chain(t_shifts.iter().map(|&t| g_hat[t]))
-            .collect();
+            .chain(t_shifts.iter().zip(t_conj.iter())
+                .map(|(&t, &k)| g_hat[t + k * folded_len]))
+            .collect_vec();
 
         // maybe use compressed proof
         let oracle_branches =
-            make_oracle_branches(&t_shifts, params.folding_params[i - 1], folded_len, &m);
+            make_oracle_branches(params.folding_params[i - 1], params.eval_sizes[i - 1],
+                                 &t_shifts, &t_conj, folded_len, &m);
         output.extend(oracle_branches);
         m = m2;
 
-        let pol = f.lagrange_interp(&rs, &g_rs);
-        let pol_vals = fft(&inv_shift_poly(&pol, params.modulus, params.eval_offsets[i]), params.modulus, rt, false);
-        assert_eq!(
-            pol_vals,
-            xs.iter().map(|&x| f.eval_poly_at(&pol, x)).collect::<Vec<_>>()
-        );
+        let pol = f.circ_lagrange_interp(&rs, &g_rs, false);
+        let pol_vals = xs.iter().map(|&x| f.eval_circ_poly_at(&pol, x)).collect_vec();
+        let zpol = f.circ_zpoly(&rs, None);
 
-        vals = (0..params.eval_sizes[i])
+        vals = (0..(2 * params.eval_sizes[i]))
             .map(|j| {
                 f.mul(
                     f.div(
                         g_hat_shift[j] - pol_vals[j],
-                        f.prod(&rs.iter().map(|&r| xs[j] - r).collect::<Vec<_>>()),
+                        f.eval_circ_poly_at(&zpol, xs[j]),
                     ),
-                    f.geom_sum(xs[j] * r_comb as i64, rs.len() as u64),
+                    f.geom_sum((xs[j] * r_comb).x, rs.len() as u64),
                 )
             })
-            .collect();
+            .collect_vec();
     }
 
     let g_hat = last_g_hat.unwrap();
     let folded_len = last_folded_len.unwrap();
-    let g_pol = fft(&g_hat, params.modulus, f.exp(rt, params.folding_params.last().cloned().unwrap() as u32), true);
+    let last_folding_param = params.folding_params.last().cloned().unwrap();
+    let last_eval_offset = params.eval_offsets.last().cloned().unwrap();
+    let g_pol = fft(&g_hat, params.modulus,
+                    f.exp(rt, last_folding_param as u32),
+                    f.exp(last_eval_offset, last_folding_param as u32));
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
     if !is_fake {
-        assert!(g_pol[final_deg..].iter().all(|&x| x == 0));
+        assert!(g_pol[(2 * final_deg + 1)..].iter().all(|&x| x == 0));
     }
-    output.extend(g_pol[..final_deg].iter().flat_map(|&c| to_32_be_bytes(c)));
+    output.extend(g_pol[..(2 * final_deg + 1)].iter().flat_map(|&c| to_32_be_bytes(c)));
 
-    let t_shifts =
-        get_pseudorandom_indices(&output, folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0);
+    let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
+    let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
+    let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
+
     let oracle_branches =
-        make_oracle_branches(&t_shifts, params.folding_params.last().cloned().unwrap(), folded_len, &m);
+        make_oracle_branches(last_folding_param,
+                             params.eval_sizes.last().cloned().unwrap(),
+                             &t_shifts, &t_conj, folded_len, &m);
     output.extend(oracle_branches);
 
     Proof(output)
 }
 
-fn make_oracle_branches(t_shifts: &[usize], last_folding_param: usize, folded_len: usize, m: &[Vec<u8>]) -> Vec<u8> {
+fn make_oracle_branches(
+    folding_param: usize,
+    eval_size: usize,
+    t_shifts: &[usize],
+    t_conj: &[usize],
+    folded_len: usize,
+    m: &[Vec<u8>],
+) -> Vec<u8> {
     let mut result = vec![];
-    for t in t_shifts {
-        for j in 0..last_folding_param {
-            let branch = mk_branch(&m, t + j * folded_len);
+    for (&t, &k) in t_shifts.iter().zip(t_conj.iter()) {
+        for j in 0..folding_param {
+            let branch = mk_branch(&m, t + j * folded_len + k * eval_size);
             result.extend(branch.into_iter().flatten())
         }
     }
@@ -198,6 +246,8 @@ fn make_oracle_branches(t_shifts: &[usize], last_folding_param: usize, folded_le
 }
 
 fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
+    todo!()
+    /*
     macro_rules! reject_unless_eq {
         ($lhs:expr,$rhs:expr) => { if $lhs != $rhs { return false; } };
     }
@@ -290,7 +340,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
                         let rs = rs.as_ref().unwrap();
                         let r_comb = r_comb.unwrap();
                         f.mul(f.div(val - f.eval_poly_at(&pol, x),
-                                    f.prod(&rs.iter().map(|&r| x - r).collect::<Vec<_>>())),
+                                    f.prod(&rs.iter().map(|&r| x - r).collect_vec())),
                               f.geom_sum(x * r_comb, rs.len() as u64))
                     }
                     None => val,
@@ -305,7 +355,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
         r_fold = r_fold_new;
         r_comb = Some(r_comb_new);
         rs = Some(rs_new);
-        let g_rs = betas.iter().cloned().chain(g_hat.iter().cloned()).collect::<Vec<_>>();
+        let g_rs = betas.iter().cloned().chain(g_hat.iter().cloned()).collect_vec();
         pol = Some(f.lagrange_interp(rs.as_ref().unwrap(), &g_rs));
     }
 
@@ -352,7 +402,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
             let x = f.mul(f.exp(rt, ind as u32), last_eval_offset);
             xs.push(x);
             vals.push(f.mul(f.div(val - f.eval_poly_at(&pol.as_ref().unwrap(), x),
-                                  f.prod(&rs.iter().map(|&r| x - r).collect::<Vec<_>>())),
+                                  f.prod(&rs.iter().map(|&r| x - r).collect_vec())),
                             f.geom_sum(x * r_comb.unwrap(), rs.len() as u64)));
         }
         reject_unless_eq!(f.eval_poly_at(&f.lagrange_interp(&xs, &vals), r_fold),
@@ -361,83 +411,74 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
 
     println!("STIR proof verified");
     true
+    */
 }
 
-fn get_pseudorandom_element_outside_coset(
+fn get_pseudorandom_element_outside_coset_circle(
     seed: &[u8],
     modulus: u32,
-    prim_root: i64,
+    prim_root: Gaussian,
     coset_size: usize,
-    shift: i64,
+    shift: Gaussian,
     count: usize,
-    is_circle: bool /* default = false*/,
-) -> Vec<i64> {
-    let adjust = if is_circle { 1 } else { -1 };
-    let m2 = if is_circle { modulus + 1 } else { modulus };
+) -> Vec<Gaussian> {
+    let adjust = 1;
+    let m2 = modulus + 1;
     assert_eq!((modulus as i64 + adjust) % (coset_size as i64), 0);
     let cofactor = (modulus as i64 + adjust) / (coset_size as i64);
-    let rands = get_pseudorandom_indices(seed, m2 - coset_size as u32, count, 0);
-    let mut ans = Vec::new();
-    for r in rands {
+    let mut exclude = vec![];
+    let mut ans = vec![];
+    let mut start = 0;
+    while ans.len() < count {
+        let r = get_pseudorandom_indices(seed, m2 - coset_size as u32, count, start, &mut exclude)[0];
+        start += 1;
+        exclude.push(r);
         let t = r + 1 + r / (cofactor as usize - 1);
-        if !is_circle && t == modulus as usize {
-            ans.push(0);
-        } else {
-            ans.push((pow_mod(prim_root, t as u32, modulus) * shift).rem_euclid(modulus as i64));
+
+        let val = (prim_root.pow_mod(t as u32, modulus) * shift).rem_euclid(modulus);
+        if (val * shift).rem_euclid(modulus).pow_mod(coset_size as u32, modulus) != Gaussian::ONE {
+            ans.push(val);
         }
     }
     ans
 }
 
-fn get_power_cycle(r: i64, modulus: u32, offset: i64) -> Vec<i64> {
-    let mut o = vec![offset];
-    loop {
-        let next = (o[o.len() - 1] * r) % (modulus as i64);
-        if next == offset {
-            break;
-        }
-        o.push(next);
-    }
-    o
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::fft::fft;
-    use super::super::pow_mod;
+    use super::super::circle_fft::fft_inv;
     use super::*;
 
     #[test]
-    fn test_stir_basics() {
-        let modulus = 2_u32.pow(20) * 7 + 1;
-        let prim_root = 3_u32;
-        let root_of_unity = pow_mod(prim_root as i64, (modulus - 1) / 2_u32.pow(10 + 2), modulus);
+    fn test_circle_stir() {
+        let modulus = 2_u32.pow(19) - 1;
+        let prim_root = Gaussian::new(308405, 185042);
+        let root_of_unity = prim_root.pow_mod((modulus + 1) / 2_u32.pow(10 + 2), modulus);
         let log_d = 10;
-        let params = generate_parameters(modulus, prim_root, root_of_unity, 1, log_d, 128, 4, 1.0, 3);
+        let params = generate_parameters(modulus, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
         println!("{:?}", params);
 
         // Pure STIR tests
-        let poly: Vec<i64> = (0..2_i64.pow(log_d)).collect();
-        let evaluations = fft(&poly, modulus, root_of_unity, false);
+        let poly: Vec<i64> = (0..2_i64.pow(log_d + 1)).collect();
+        let evaluations = fft_inv(&poly, modulus, root_of_unity, prim_root);
         let proof = prove_low_degree(&evaluations, &params, false);
         assert!(verify_low_degree_proof(&proof, &params));
 
-        let fakedata: Vec<i64> = evaluations.iter().enumerate().map(|(i, &x)| {
-            if pow_mod(3, x as u32, 4096) > 400 { i as i64 } else { 39 }
-        }).collect();
-        let proof2 = prove_low_degree(&fakedata, &params, true);
-        println!("fake proof created");
-        match verify_low_degree_proof(&proof2, &params) {
-            true => panic!("Fake data passed FRI"),
-            false => println!("fake proof rejected"),
-        }
+        // let fakedata: Vec<i64> = evaluations.iter().enumerate().map(|(i, &x)| {
+        //     if pow_mod(3, x as u32, 4096) > 400 { i as i64 } else { 39 }
+        // }).collect();
+        // let proof2 = prove_low_degree(&fakedata, &params, true);
+        // println!("fake proof created");
+        // match verify_low_degree_proof(&proof2, &params) {
+        //     true => panic!("Fake data passed FRI"),
+        //     false => println!("fake proof rejected"),
+        // }
     }
 
     fn generate_parameters(
         modulus: u32,
-        prim_root: u32,
-        root_of_unity: i64,
-        init_offset: u64,
+        prim_root: Gaussian,
+        root_of_unity: Gaussian,
+        init_offset: Gaussian,
         log_d: u32,
         _security_param: u64,
         log_stopping_degree: u64,
@@ -445,18 +486,18 @@ mod tests {
         log_folding_param: u32,
     ) -> Parameters {
         let m = ((log_d as u64 - log_stopping_degree) / log_folding_param as u64) as usize;
-        let size_l = get_power_cycle(root_of_unity, modulus, 1).len();
+        let size_l = get_power_cycle(root_of_unity, modulus, Gaussian::new(1, 0)).len();
         assert!(size_l.is_power_of_two());
         assert!(proximity_param > 0.0 && proximity_param <= 1.0);
 
-        let mut eval_sizes = vec![size_l as usize];
-        let mut eval_offsets = vec![init_offset as i64];
+        let mut eval_sizes = vec![size_l];
+        let mut eval_offsets = vec![init_offset];
         let mut rt = root_of_unity;
 
         for _ in 1..=m {
             eval_sizes.push(eval_sizes.last().unwrap() / 2);
-            eval_offsets.push(rt);
-            rt = pow_mod(rt, 2, modulus);
+            eval_offsets.push((rt * init_offset).rem_euclid(modulus));
+            rt = rt.pow_mod(2, modulus);
         }
 
         Parameters {

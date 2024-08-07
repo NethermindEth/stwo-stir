@@ -3,21 +3,14 @@
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Euclid, ToPrimitive};
+use gaussian::Gaussian;
 
-mod plain_stir;
+mod circle_stir;
 mod fft;
+mod circle_fft;
 mod merkle_trees;
 mod poly_utils;
-
-#[derive(Debug, Eq, PartialEq, Clone)]
-struct Point {
-    x: i64,
-    y: i64,
-}
-
-fn pow_mod(base: i64, exp: u32, modulus: u32) -> i64 {
-    BigInt::from(base).modpow(&BigInt::from(exp), &BigInt::from(modulus)).to_i64().unwrap()
-}
+mod gaussian;
 
 fn mul_mod(x: &[i64], modulus: u32) -> i64 {
     x.iter().fold(1, |acc, &y| (acc * y).rem_euclid(modulus as i64))
@@ -39,9 +32,9 @@ fn get_pseudorandom_indices(
     seed: &[u8],
     modulus: u32,
     count: usize,
-    start: usize /* default=0 */,
+    start: usize,
+    exclude: &mut Vec<usize>,
 ) -> Vec<usize> {
-    let mut exclude = vec![];
     assert!(modulus < 2_u32.pow(24)); // inherited from Vitalik's code, not sure if this is needed.
     let mut ans = Vec::new();
     for c in start..(count + start) {
@@ -53,9 +46,67 @@ fn get_pseudorandom_indices(
         ).rem_euclid(
             &BigInt::from(modulus - exclude.len() as u32)
         ).to_usize().unwrap();
-        let val = val + exclude2.binary_search(&val).unwrap_or_else(|x| x) as usize;
+        let bisection_point = match exclude2.binary_search(&val) {
+            Ok(mut i) => {
+                // We need a last index, not the first one
+                while i < exclude2.len() && exclude[i] == val {
+                    i += 1;
+                }
+                i
+            }
+            Err(x) => x,
+        };
+        let val = val + bisection_point;
         ans.push(val);
         exclude.push(val);
     }
     ans
+}
+
+pub fn inv(a: i64, modulus: u32) -> i64 {
+    let modulus = modulus as i64;
+    let (mut lm, mut hm) = (1, 0);
+    let (mut low, mut high) = (a.rem_euclid(modulus), modulus);
+    if low == 0 {
+        panic!("ZeroDivisionError");
+    }
+    while low > 1 {
+        let r = high / low;
+        let (nm, new) = (hm - lm * r, high - low * r);
+        (lm, low, hm, high) = (nm, new, lm, low);
+    }
+    lm.rem_euclid(modulus)
+}
+
+pub fn get_power_cycle(r: Gaussian, modulus: u32, offset: Gaussian) -> Vec<Gaussian> {
+    let mut o = vec![offset];
+    loop {
+        let next = (o[o.len() - 1] * r).rem_euclid(modulus);
+        if next == offset {
+            break;
+        }
+        o.push(next);
+    }
+
+    o
+}
+
+pub trait PowMod {
+    fn pow_mod(self, exp: u32, modulus: u32) -> Self;
+}
+
+impl PowMod for i64 {
+    fn pow_mod(self, exp: u32, modulus: u32) -> i64 {
+        BigInt::from(self).modpow(&BigInt::from(exp), &BigInt::from(modulus)).to_i64().unwrap()
+    }
+}
+
+pub trait RemEuclid {
+    fn rem_euclid(self, modulus: u32) -> Self;
+}
+
+impl RemEuclid for i64 {
+    fn rem_euclid(self, modulus: u32) -> i64 {
+        Euclid::rem_euclid(&self, &(modulus as i64))
+    }
 }

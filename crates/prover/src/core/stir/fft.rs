@@ -1,5 +1,5 @@
 //! Translated from Nethermind STIR's fft.py
-
+#![allow(dead_code, unused)]
 use super::*;
 
 pub fn fft(vals: &[i64], modulus: u32, root_of_unity: i64, inv: bool /* default=false */) -> Vec<i64> {
@@ -11,7 +11,7 @@ pub fn fft(vals: &[i64], modulus: u32, root_of_unity: i64, inv: bool /* default=
     }
     if inv {
         // Inverse FFT
-        let invlen = pow_mod(vals.len() as i64, (modulus - 2) as u32, modulus);
+        let invlen = (vals.len() as i64).pow_mod(modulus - 2, modulus);
         let rootz_inv: Vec<_> = rootz[1..].iter().rev().cloned().collect();
         let fft = _fft(&vals, modulus, &rootz_inv);
         fft
@@ -67,7 +67,7 @@ pub fn shift_domain(vals: &[i64], modulus: u32, root_of_unity: i64, factor: i64,
     }
     // 1/2 in the field
     let half = (modulus + 1) / 2;
-    let rt = pow_mod(root_of_unity, expand, modulus);
+    let rt = root_of_unity.pow_mod(expand, modulus);
     let rootz = {
         let mut v = expand_root_of_unity(rt, modulus);
         let _ = v.pop();
@@ -91,8 +91,8 @@ pub fn shift_domain(vals: &[i64], modulus: u32, root_of_unity: i64, factor: i64,
         let root = if i == 0 { rootz[0] } else { rootz[rootz.len() - i] };
         mul_mod(&[f - g, half as i64, root], modulus)
     }).collect();
-    let shifted_evens = shift_domain(&evens[..half_length], modulus, pow_mod(root_of_unity, 2, modulus), pow_mod(factor, 2, modulus), expand);
-    let shifted_odds = shift_domain(&odds[..half_length], modulus, pow_mod(root_of_unity, 2, modulus), pow_mod(factor, 2, modulus), expand);
+    let shifted_evens = shift_domain(&evens[..half_length], modulus, root_of_unity.pow_mod(2, modulus), factor.pow_mod(2, modulus), expand);
+    let shifted_odds = shift_domain(&odds[..half_length], modulus, root_of_unity.pow_mod(2, modulus), factor.pow_mod(2, modulus), expand);
     (0..2 * shifted_evens.len()).map(|i| {
         (
             shifted_evens[i % shifted_evens.len()]
@@ -109,7 +109,7 @@ pub fn inv_fft_at_point(vals: &[i64], modulus: u32, root_of_unity: i64, x: i64) 
     // 1/2 in the field
     let half = (modulus as i64 + 1) / 2;
     // 1/w
-    let inv_root = pow_mod(root_of_unity, vals.len() as u32 - 1, modulus);
+    let inv_root = root_of_unity.pow_mod(vals.len() as u32 - 1, modulus);
     // f(-x) in evaluation form
     let f_of_minus_x_vals: Vec<i64> = vals[vals.len() / 2..].iter().chain(&vals[..vals.len() / 2]).cloned().collect();
     // e(x) = (f(x) + f(-x)) / 2 in evaluation form
@@ -118,9 +118,9 @@ pub fn inv_fft_at_point(vals: &[i64], modulus: u32, root_of_unity: i64, x: i64) 
     let odds: Vec<i64> = vals.iter().zip(&f_of_minus_x_vals).map(|(&f, &g)| ((f - g) * half).rem_euclid(modulus as i64)).collect();
     // e(x^2) + coordinate * x * o(x^2) in evaluation form
     let comb: Vec<i64> = odds.iter().zip(&evens).enumerate().map(|(i, (&o, &e))| {
-        (mul_mod(&[o, x, pow_mod(inv_root, i as u32, modulus)], modulus) + e).rem_euclid(modulus as i64)
+        (mul_mod(&[o, x, inv_root.pow_mod(i as u32, modulus)], modulus) + e).rem_euclid(modulus as i64)
     }).collect();
-    inv_fft_at_point(&comb[..comb.len() / 2], modulus, pow_mod(root_of_unity, 2, modulus), pow_mod(x, 2, modulus))
+    inv_fft_at_point(&comb[..comb.len() / 2], modulus, root_of_unity.pow_mod(2, modulus), x.pow_mod(2, modulus))
 }
 
 pub fn inv_shift_poly(poly: &[i64], modulus: u32, factor: i64) -> Vec<i64> {
