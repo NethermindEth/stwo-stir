@@ -4,7 +4,7 @@ use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Euclid, ToPrimitive};
 
-mod plain_stir;
+mod stir;
 mod fft;
 mod merkle_trees;
 mod poly_utils;
