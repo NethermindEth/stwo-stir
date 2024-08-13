@@ -1,5 +1,4 @@
 //! Translated from Nethermind STIR's circle_fft.py
-#![allow(dead_code, unused)]
 use super::gaussian::*;
 use super::*;
 
@@ -44,7 +43,6 @@ fn x_fft_inv(coefs: &[i64], modulus: u32, xs: &[i64]) -> Vec<i64> {
         return vec![coefs[0]; xs.len()];
     }
     let modulus = modulus as i64;
-    let half = (modulus + 1) / 2;
     let new_xs_len = if xs.len() == 1 { 1 } else { xs.len() / 2 };
     let new_xs: Vec<_> = xs[..new_xs_len].iter().map(|x| (2 * x * x - 1).rem_euclid(modulus)).collect();
     let even = x_fft_inv(&coefs.iter().step_by(2).cloned().collect::<Vec<_>>(), modulus as u32, &new_xs);
@@ -104,14 +102,6 @@ fn _simple_ft(vals: &[i64], modulus: u32, roots_of_unity: &[i64]) -> Vec<i64> {
     o
 }
 
-fn expand_root_of_unity(root_of_unity: i64, modulus: u32) -> Vec<i64> {
-    let mut rootz = vec![1, root_of_unity];
-    while *rootz.last().unwrap() != 1 {
-        rootz.push((rootz.last().unwrap() * root_of_unity).rem_euclid(modulus as i64));
-    }
-    rootz
-}
-
 pub fn shift_domain(
     vals: &[i64],
     modulus: u32,
@@ -126,14 +116,4 @@ pub fn shift_domain(
 /// Evaluates f(x) for f in evaluation form
 pub fn inv_fft_at_point(vals: &[i64], modulus: u32, root_of_unity: Gaussian, offset: Gaussian, x: Gaussian) -> i64 {
     fft_inv(&fft(vals, modulus, root_of_unity, offset), modulus, Gaussian::new(1, 0), x)[0]
-}
-
-pub fn inv_shift_poly(poly: &[i64], modulus: u32, factor: i64) -> Vec<i64> {
-    let mut factor_power = 1;
-    let mut o = Vec::with_capacity(poly.len());
-    for &p in poly {
-        o.push((p * factor_power).rem_euclid(modulus as i64));
-        factor_power = (factor_power * factor).rem_euclid(modulus as i64);
-    }
-    o
 }

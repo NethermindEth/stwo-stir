@@ -1,7 +1,5 @@
-//! This is the implementation of an original STIR (non-circle) algorithm from scratch,
+//! This is the implementation of a circle modification of STIR algorithm from scratch,
 //! moved from Pyhton trying to keep it close to the original implementation.
-#![allow(dead_code, unused)]
-
 use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
 use num_traits::{ConstOne, ToPrimitive};
@@ -11,7 +9,6 @@ use super::merkle_trees::*;
 use super::poly_utils::*;
 use super::gaussian::*;
 
-#[allow(dead_code)]
 #[derive(Debug)]
 struct Parameters {
     root_of_unity: Gaussian,

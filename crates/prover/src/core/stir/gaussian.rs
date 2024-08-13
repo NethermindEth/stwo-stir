@@ -2,7 +2,7 @@ use std::ops::*;
 use num_traits::{ConstOne, ConstZero, One, Zero};
 use super::*;
 
-/// A gaussian (complex) number, x is real part, y is imaginary.
+/// A gaussian (complex) number, x is the real part, y is imaginary.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Gaussian {
     pub x: i64,

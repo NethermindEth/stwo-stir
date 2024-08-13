@@ -6,22 +6,16 @@ use num_traits::{Euclid, ToPrimitive};
 use gaussian::Gaussian;
 
 mod circle_stir;
-mod fft;
 mod circle_fft;
 mod merkle_trees;
 mod poly_utils;
 mod gaussian;
-
-fn mul_mod(x: &[i64], modulus: u32) -> i64 {
-    x.iter().fold(1, |acc, &y| (acc * y).rem_euclid(modulus as i64))
-}
 
 fn to_32_be_bytes(x: i64) -> [u8; 32] {
     let mut res = [0; 32];
     res[24..].copy_from_slice(&x.to_be_bytes());
     res
 }
-
 
 fn blake(x: &[u8]) -> Vec<u8> {
     Blake2s256::digest(x).to_vec()
