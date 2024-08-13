@@ -5,8 +5,8 @@ use num_bigint::{BigInt, Sign};
 use num_traits::{Euclid, ToPrimitive};
 use gaussian::Gaussian;
 
-mod circle_stir;
-mod circle_fft;
+mod stir;
+mod fft;
 mod merkle_trees;
 mod poly_utils;
 mod gaussian;

@@ -4,7 +4,7 @@ use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
 use num_traits::{ConstOne, ToPrimitive};
 use super::*;
-use super::circle_fft::*;
+use super::fft::*;
 use super::merkle_trees::*;
 use super::poly_utils::*;
 use super::gaussian::*;
@@ -478,7 +478,7 @@ fn get_pseudorandom_element_outside_coset_circle(
 
 #[cfg(test)]
 mod tests {
-    use super::super::circle_fft::fft_inv;
+    use super::super::fft::fft_inv;
     use super::*;
 
     #[test]
