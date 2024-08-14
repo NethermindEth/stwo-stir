@@ -2,7 +2,8 @@
 //! moved from Pyhton trying to keep it close to the original implementation.
 use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
-use num_traits::{ConstOne, ToPrimitive};
+use num_traits::{ConstOne, Pow, ToPrimitive};
+use crate::core::stir::gaussian_field::GaussianF;
 use super::*;
 use super::fft::*;
 use super::merkle_trees::*;
@@ -10,16 +11,16 @@ use super::poly_utils::*;
 use super::gaussian::*;
 
 #[derive(Debug)]
-struct Parameters {
-    root_of_unity: Gaussian,
+struct Parameters<T> {
+    root_of_unity: T,
     maxdeg_plus_1: u32,
     folding_params: Vec<usize>,
-    eval_offsets: Vec<Gaussian>,
+    eval_offsets: Vec<T>,
     eval_sizes: Vec<usize>,
     repetition_params: Vec<usize>,
     ood_rep: usize,
     modulus: u32,
-    prim_root: Gaussian,
+    prim_root: T,
 }
 
 #[derive(Debug)]
@@ -31,7 +32,7 @@ struct Proof(Vec<u8>);
 ///
 /// We use maxdeg\+1 instead of maxdeg because it's more mathematically
 /// convenient in this case.
-fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof {
+fn prove_low_degree<const MOD: u32>(values: &[i64], params: &Parameters<GaussianF<MOD>>, is_fake: bool) -> Proof {
     let f = PrimeField::new(params.modulus);
     if is_fake {
         println!("Faking proof {} values are degree <= {}", values.len(), params.maxdeg_plus_1);
@@ -65,7 +66,7 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
     // r_fold = f.exp(prim_root, int.from_bytes(m[1], 'big') % (modulus + 1))
     let mut r_fold = {
         let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(params.modulus + 1)).to_u32().unwrap();
-        f.exp(params.prim_root, pow)
+        params.prim_root.pow(pow)
     };
     output.extend_from_slice(&m[1]);
 
@@ -79,9 +80,9 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
         last_folded_len = Some(folded_len);
 
         // should replace lagrange_interp with an fft?
-        let rt2 = f.exp(rt, folded_len as u32);
+        let rt2 = rt.pow(folded_len as u32);
         let xs2s = {
-            let mut res = vec![get_power_cycle(rt2, params.modulus, Gaussian::new(1, 0))];
+            let mut res = vec![get_power_cycle(rt2, params.modulus, GaussianF::ONE)];
             res.push(res[0].clone());
             (&mut res[1][1..]).reverse();
             res
@@ -121,9 +122,9 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
         assert_eq!(params.eval_sizes[i - 1] % params.eval_sizes[i], 0);
         let eval_size_scale = params.eval_sizes[i - 1] / params.eval_sizes[i];
 
-        rt = f.exp(rt, eval_size_scale as u32);
-        let rt2 = f.exp(rt, expand_factor as u32);
-        let p_offset = f.exp(params.eval_offsets[i - 1], params.folding_params[i - 1] as u32);
+        rt = rt.pow(eval_size_scale as u32);
+        let rt2 = rt.pow(expand_factor as u32);
+        let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u32);
 
         let g_hat_shift = shift_domain(
             &g_hat,
@@ -154,16 +155,16 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
             .collect_vec();
         output.extend(betas.iter().flat_map(|&b| to_32_be_bytes(b)));
 
-        r_fold = f.exp(params.prim_root, get_pseudorandom_indices(&output, params.modulus + 1, 1, 0, &mut vec![])[0] as u32);
-        let r_comb = f.exp(params.prim_root, get_pseudorandom_indices(&output, params.modulus + 1, 1, 1, &mut vec![])[0] as u32);
+        r_fold = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 0, &mut vec![])[0] as u32);
+        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 1, &mut vec![])[0] as u32);
         let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         assert_eq!((params.ood_rep + params.repetition_params[i - 1]).rem_euclid(2), 0);
 
-        let rs: Vec<Gaussian> = r_outs.iter().cloned()
+        let rs: Vec<GaussianF<MOD>> = r_outs.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
-                .map(|(&t, &k)| f.mul(p_offset, f.exp(rt2, t as u32)).conj(k as u32).rem_euclid(params.modulus)))
+                .map(|(&t, &k)| (p_offset * rt2.pow(t as u32)).conj(k as u32)))
             .collect_vec();
         let g_rs: Vec<i64> = betas.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
@@ -199,8 +200,8 @@ fn prove_low_degree(values: &[i64], params: &Parameters, is_fake: bool) -> Proof
     let last_folding_param = params.folding_params.last().cloned().unwrap();
     let last_eval_offset = params.eval_offsets.last().cloned().unwrap();
     let g_pol = fft(&g_hat, params.modulus,
-                    f.exp(rt, last_folding_param as u32),
-                    f.exp(last_eval_offset, last_folding_param as u32));
+                    rt.pow(last_folding_param as u32),
+                    last_eval_offset.pow(last_folding_param as u32));
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
     if !is_fake {
         assert!(g_pol[(2 * final_deg + 1)..].iter().all(|&x| x == 0));
@@ -238,7 +239,7 @@ fn make_oracle_branches(
     result
 }
 
-fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
+fn verify_low_degree_proof(proof: &Proof, params: &Parameters<Gaussian>) -> bool {
     macro_rules! reject_unless_eq {
         ($lhs:expr,$rhs:expr) => { if $lhs != $rhs { return false; } };
     }
@@ -447,14 +448,14 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters) -> bool {
     true
 }
 
-fn get_pseudorandom_element_outside_coset_circle(
+fn get_pseudorandom_element_outside_coset_circle<F: KindaField>(
     seed: &[u8],
     modulus: u32,
-    prim_root: Gaussian,
+    prim_root: F,
     coset_size: usize,
-    shift: Gaussian,
+    shift: F,
     count: usize,
-) -> Vec<Gaussian> {
+) -> Vec<F> {
     let adjust = 1;
     let m2 = modulus + 1;
     assert_eq!((modulus as i64 + adjust) % (coset_size as i64), 0);
@@ -469,7 +470,7 @@ fn get_pseudorandom_element_outside_coset_circle(
         let t = r + 1 + r / (cofactor as usize - 1);
 
         let val = (prim_root.pow_mod(t as u32, modulus) * shift).rem_euclid(modulus);
-        if (val * shift).rem_euclid(modulus).pow_mod(coset_size as u32, modulus) != Gaussian::ONE {
+        if (val * shift).rem_euclid(modulus).pow_mod(coset_size as u32, modulus) != F::ONE {
             ans.push(val);
         }
     }
@@ -483,17 +484,28 @@ mod tests {
 
     #[test]
     fn test_circle_stir() {
-        let modulus = 2_u32.pow(19) - 1;
+        const MODULUS: u32 = 2_u32.pow(19) - 1;
         let prim_root = Gaussian::new(308405, 185042);
-        let root_of_unity = prim_root.pow_mod((modulus + 1) / 2_u32.pow(10 + 2), modulus);
+        let root_of_unity = prim_root.pow_mod((MODULUS + 1) / 2_u32.pow(10 + 2), MODULUS);
         let log_d = 10;
-        let params = generate_parameters(modulus, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
+        let params = generate_parameters(MODULUS, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
         println!("{:?}", params);
 
         // Pure STIR tests
         let poly: Vec<i64> = (0..2_i64.pow(log_d + 1)).collect();
-        let evaluations = fft_inv(&poly, modulus, root_of_unity, prim_root);
-        let proof = prove_low_degree(&evaluations, &params, false);
+        let evaluations = fft_inv(&poly, MODULUS, root_of_unity, prim_root);
+        let params2: Parameters<GaussianF<MODULUS>> = Parameters {
+            root_of_unity: params.root_of_unity.into(),
+            maxdeg_plus_1: params.maxdeg_plus_1,
+            folding_params: params.folding_params.clone(),
+            eval_offsets: params.eval_offsets.iter().map(|o| (*o).into()).collect_vec(),
+            eval_sizes: params.eval_sizes.clone(),
+            repetition_params: params.repetition_params.clone(),
+            ood_rep: params.ood_rep,
+            modulus: params.modulus,
+            prim_root: params.prim_root.into(),
+        };
+        let proof = prove_low_degree(&evaluations, &params2, false);
         assert!(verify_low_degree_proof(&proof, &params));
 
         // let fakedata: Vec<i64> = evaluations.iter().enumerate().map(|(i, &x)| {
@@ -517,7 +529,7 @@ mod tests {
         log_stopping_degree: u64,
         proximity_param: f64,
         log_folding_param: u32,
-    ) -> Parameters {
+    ) -> Parameters<Gaussian> {
         let m = ((log_d as u64 - log_stopping_degree) / log_folding_param as u64) as usize;
         let size_l = get_power_cycle(root_of_unity, modulus, Gaussian::new(1, 0)).len();
         assert!(size_l.is_power_of_two());

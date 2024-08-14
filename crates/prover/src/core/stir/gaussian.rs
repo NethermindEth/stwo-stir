@@ -51,7 +51,18 @@ impl Add for Gaussian {
     }
 }
 
-impl Mul<Gaussian> for Gaussian {
+impl Sub for Gaussian {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Gaussian {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
+    }
+}
+
+impl Mul for Gaussian {
     type Output = Self;
 
     fn mul(self, rhs: Gaussian) -> Self::Output {
@@ -59,6 +70,22 @@ impl Mul<Gaussian> for Gaussian {
             x: self.x * rhs.x - self.y * rhs.y,
             y: self.x * rhs.y + self.y * rhs.x,
         }
+    }
+}
+
+impl Div for Gaussian {
+    type Output = Self;
+
+    fn div(self, _rhs: Self) -> Self::Output {
+        unimplemented!("Division not implemented for Gaussian");
+    }
+}
+
+impl Rem for Gaussian {
+    type Output = Self;
+
+    fn rem(self, _rhs: Self) -> Self::Output {
+        unimplemented!("Remainder not implemented for Gaussian");
     }
 }
 
@@ -82,4 +109,9 @@ impl RemEuclid for Gaussian {
     fn rem_euclid(self, modulus: u32) -> Self {
         Gaussian { x: self.x.rem_euclid(modulus as i64), y: self.y.rem_euclid(modulus as i64) }
     }
+}
+
+impl Xy for Gaussian {
+    fn x(&self) -> i64 { self.x }
+    fn y(&self) -> i64 { self.y }
 }

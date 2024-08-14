@@ -1,15 +1,14 @@
 //! Translated from Nethermind STIR's circle_fft.py
-use super::gaussian::*;
 use super::*;
 
 /// Uses twin coset
-pub fn fft_inv(coefs: &[i64], modulus: u32, root_of_unity: Gaussian, offset: Gaussian) -> Vec<i64> {
+pub fn fft_inv<F: KindaField>(coefs: &[i64], modulus: u32, root_of_unity: F, offset: F) -> Vec<i64> {
     let rootz = get_power_cycle(root_of_unity, modulus, offset);
-    let xs: Vec<i64> = rootz.iter().map(|r| r.x).collect();
+    let xs: Vec<i64> = rootz.iter().map(|r| r.x()).collect();
     let even = x_fft_inv(&coefs.iter().step_by(2).cloned().collect::<Vec<_>>(), modulus, &xs);
     let odd = x_fft_inv(&coefs.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(), modulus, &xs);
-    let first_cycle: Vec<i64> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| (a + b * r.y).rem_euclid(modulus as i64)).collect();
-    let second_cycle: Vec<i64> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| (a - b * r.y).rem_euclid(modulus as i64)).collect();
+    let first_cycle: Vec<i64> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| (a + b * r.y()).rem_euclid(modulus as i64)).collect();
+    let second_cycle: Vec<i64> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| (a - b * r.y()).rem_euclid(modulus as i64)).collect();
     [first_cycle, second_cycle].concat()
 }
 
@@ -55,9 +54,9 @@ fn x_fft_inv(coefs: &[i64], modulus: u32, xs: &[i64]) -> Vec<i64> {
 }
 
 /// Uses twin coset
-pub fn fft(vals: &[i64], modulus: u32, root_of_unity: Gaussian, offset: Gaussian) -> Vec<i64> {
+pub fn fft<F: KindaField>(vals: &[i64], modulus: u32, root_of_unity: F, offset: F) -> Vec<i64> {
     let rootz = get_power_cycle(root_of_unity, modulus, offset);
-    let xs: Vec<i64> = rootz.iter().map(|r| r.x).collect();
+    let xs: Vec<i64> = rootz.iter().map(|r| r.x()).collect();
     let half = (modulus as i64 + 1) / 2;
     let new_len = vals.len() / 2;
     assert_eq!(new_len, rootz.len());
@@ -67,7 +66,7 @@ pub fn fft(vals: &[i64], modulus: u32, root_of_unity: Gaussian, offset: Gaussian
         ((a + b) * half).rem_euclid(modulus as i64)
     }).collect();
     let odd: Vec<i64> = first_half.iter().zip(second_half).zip(&rootz).map(|((&a, &b), r)| {
-        ((a - b) * half * inv(r.y, modulus)).rem_euclid(modulus as i64)
+        ((a - b) * half * inv(r.y(), modulus)).rem_euclid(modulus as i64)
     }).collect();
     interleave(&x_fft(&even, modulus, &xs), &x_fft(&odd, modulus, &xs))
 }
@@ -102,18 +101,18 @@ fn _simple_ft(vals: &[i64], modulus: u32, roots_of_unity: &[i64]) -> Vec<i64> {
     o
 }
 
-pub fn shift_domain(
+pub fn shift_domain<F: KindaField>(
     vals: &[i64],
     modulus: u32,
-    root_of_unity: Gaussian,
-    offset: Gaussian,
-    factor: Gaussian,
+    root_of_unity: F,
+    offset: F,
+    factor: F,
     expand: u32, /* default = 1*/
 ) -> Vec<i64> {
     fft_inv(&fft(vals, modulus, root_of_unity.pow_mod(expand, modulus), offset), modulus, root_of_unity, factor)
 }
 
 /// Evaluates f(x) for f in evaluation form
-pub fn inv_fft_at_point(vals: &[i64], modulus: u32, root_of_unity: Gaussian, offset: Gaussian, x: Gaussian) -> i64 {
-    fft_inv(&fft(vals, modulus, root_of_unity, offset), modulus, Gaussian::new(1, 0), x)[0]
+pub fn inv_fft_at_point<F: KindaField>(vals: &[i64], modulus: u32, root_of_unity: F, offset: F, x: F) -> i64 {
+    fft_inv(&fft(vals, modulus, root_of_unity, offset), modulus, F::ONE, x)[0]
 }

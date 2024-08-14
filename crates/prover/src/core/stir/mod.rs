@@ -2,14 +2,23 @@
 
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
-use num_traits::{Euclid, ToPrimitive};
-use gaussian::Gaussian;
+use num_traits::{ConstOne, Euclid, NumOps, ToPrimitive};
 
 mod stir;
 mod fft;
 mod merkle_trees;
 mod poly_utils;
 mod gaussian;
+mod gaussian_field;
+
+trait Xy {
+    fn x(&self) -> i64;
+    fn y(&self) -> i64;
+}
+
+trait KindaField: NumOps<Self> + PartialEq + Xy + PowMod + RemEuclid + ConstOne + Copy {}
+
+impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + PowMod + RemEuclid + ConstOne + Copy {}
 
 fn to_32_be_bytes(x: i64) -> [u8; 32] {
     let mut res = [0; 32];
@@ -57,7 +66,7 @@ fn get_pseudorandom_indices(
     ans
 }
 
-pub fn inv(a: i64, modulus: u32) -> i64 {
+fn inv(a: i64, modulus: u32) -> i64 {
     let modulus = modulus as i64;
     let (mut lm, mut hm) = (1, 0);
     let (mut low, mut high) = (a.rem_euclid(modulus), modulus);
@@ -72,7 +81,7 @@ pub fn inv(a: i64, modulus: u32) -> i64 {
     lm.rem_euclid(modulus)
 }
 
-pub fn get_power_cycle(r: Gaussian, modulus: u32, offset: Gaussian) -> Vec<Gaussian> {
+fn get_power_cycle<F: KindaField>(r: F, modulus: u32, offset: F) -> Vec<F> {
     let mut o = vec![offset];
     loop {
         let next = (o[o.len() - 1] * r).rem_euclid(modulus);

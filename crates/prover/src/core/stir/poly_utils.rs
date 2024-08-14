@@ -2,7 +2,6 @@
 
 use std::ops::{Mul};
 use super::*;
-use super::gaussian::*;
 
 /// An object that includes convenience operations for numbers
 /// and polynomials in some prime field
@@ -123,36 +122,36 @@ impl PrimeField {
     }
 
     /// Evaluate a circular polynomial at a point
-    pub fn eval_circ_poly_at(&self, p: &[Vec<i64>], pt: Gaussian) -> i64 {
-        self.add(self.eval_poly_at(&p[0], pt.x), self.eval_poly_at(&p[1], pt.x) * pt.y)
+    pub fn eval_circ_poly_at<F: KindaField>(&self, p: &[Vec<i64>], pt: F) -> i64 {
+        self.add(self.eval_poly_at(&p[0], pt.x()), self.eval_poly_at(&p[1], pt.x()) * pt.y())
     }
 
     /// Create a line polynomial between two points
-    fn line(&self, pt1: Gaussian, pt2: Gaussian) -> Vec<Vec<i64>> {
-        let dx = self.sub(pt1.x, pt2.x);
+    fn line<F: KindaField>(&self, pt1: F, pt2: F) -> Vec<Vec<i64>> {
+        let dx = self.sub(pt1.x(), pt2.x());
         if dx == 0 {
-            return vec![vec![pt1.x, self.modulus as i64 - 1], vec![]];
+            return vec![vec![pt1.x(), self.modulus as i64 - 1], vec![]];
         }
-        let slope = self.div(pt1.y - pt2.y, dx);
+        let slope = self.div(pt1.y() - pt2.y(), dx);
         vec![
-            vec![(pt1.y - slope * pt1.x).rem_euclid(self.modulus as i64), slope],
+            vec![(pt1.y() - slope * pt1.x()).rem_euclid(self.modulus as i64), slope],
             vec![self.modulus as i64 - 1],
         ]
     }
 
     /// Build a circular polynomial that returns 0 at all specified points
-    pub fn circ_zpoly(&self, pts: &[Gaussian], nzero: Option<&Gaussian> /* default = None */) -> Vec<Vec<i64>> {
+    pub fn circ_zpoly<F: KindaField>(&self, pts: &[F], nzero: Option<&F> /* default = None */) -> Vec<Vec<i64>> {
         let mut ans = vec![vec![1], vec![]];
         for i in 0..pts.len() / 2 {
             ans = self.mul_circ_polys(&ans, &self.line(pts[2 * i], pts[2 * i + 1]));
         }
         if pts.len() % 2 == 1 {
             match nzero {
-                Some(nzero) if nzero.x == pts[pts.len() - 1].x => {
-                    ans = self.mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].y], vec![self.modulus as i64 - 1]]);
+                Some(nzero) if nzero.x() == pts[pts.len() - 1].x() => {
+                    ans = self.mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].y()], vec![self.modulus as i64 - 1]]);
                 }
                 _ => {
-                    ans = self.mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].x, self.modulus as i64 - 1], vec![]]);
+                    ans = self.mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].x(), self.modulus as i64 - 1], vec![]]);
                 }
             }
         }
@@ -160,7 +159,7 @@ impl PrimeField {
     }
 
     /// Circular Lagrange interpolation
-    pub fn circ_lagrange_interp(&self, pts: &[Gaussian], vals: &[i64], normalize: bool /* default = false */) -> Vec<Vec<i64>> {
+    pub fn circ_lagrange_interp<F: KindaField>(&self, pts: &[F], vals: &[i64], normalize: bool /* default = false */) -> Vec<Vec<i64>> {
         assert_eq!(pts.len(), vals.len());
         let mut ans = vec![vec![], vec![]];
         for i in 0..pts.len() {
