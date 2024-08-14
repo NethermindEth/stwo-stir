@@ -189,7 +189,7 @@ fn prove_low_degree<const MOD: u32>(values: &[i64], params: &Parameters<Gaussian
                         g_hat_shift[j] - pol_vals[j],
                         f.eval_circ_poly_at(&zpol, xs[j]),
                     ),
-                    f.geom_sum((xs[j] * r_comb).x, rs.len() as u64),
+                    f.geom_sum((xs[j] * r_comb).x as i64, rs.len() as u64),
                 )
             })
             .collect_vec();

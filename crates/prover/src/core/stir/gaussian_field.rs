@@ -6,20 +6,24 @@ use super::{PowMod, RemEuclid, Xy};
 /// A gaussian (complex) number, x is the real part, y is imaginary.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GaussianF<const MOD: u32> {
-    pub x: i64,
-    pub y: i64,
+    pub x: u32,
+    pub y: u32,
 }
 
 impl<const MOD: u32> GaussianF<MOD> {
-    pub fn new(x: i64, y: i64) -> Self {
-        Self { x: x.rem_euclid(MOD as i64), y: y.rem_euclid(MOD as i64) }
+    pub fn new_signed(x: i64, y: i64) -> Self {
+        Self { x: x.rem_euclid(MOD as i64) as u32, y: y.rem_euclid(MOD as i64) as u32 }
+    }
+
+    pub fn new(x: u32, y: u32) -> Self {
+        Self { x: x.rem_euclid(MOD), y: y.rem_euclid(MOD) }
     }
 
     pub fn conj(self, parity: u32 /* default = 1 */) -> Self {
         if parity % 2 == 0 {
             self
         } else {
-            GaussianF::new(self.x, -self.y)
+            GaussianF::new_signed(self.x as i64, -(self.y as i64))
         }
     }
 }
@@ -67,9 +71,11 @@ impl<const MOD: u32> Mul for GaussianF<MOD> {
     type Output = Self;
 
     fn mul(self, rhs: GaussianF<MOD>) -> Self::Output {
+        let (x1, y1) = (self.x as i128, self.y as i128);
+        let (x2, y2) = (rhs.x as i128, rhs.y as i128);
         Self::new(
-            self.x * rhs.x - self.y * rhs.y,
-            self.x * rhs.y + self.y * rhs.x,
+            (x1 * x2 - y1 * y2).rem_euclid(MOD as i128) as u32,
+            (x1 * y2 + y1 * x2).rem_euclid(MOD as i128) as u32,
         )
     }
 }
@@ -124,19 +130,19 @@ impl<const MOD: u32> RemEuclid for GaussianF<MOD> {
 }
 
 impl<const MOD: u32> Xy for GaussianF<MOD> {
-    fn x(&self) -> i64 { self.x }
-    fn y(&self) -> i64 { self.y }
+    fn x(&self) -> i64 { self.x as i64 }
+    fn y(&self) -> i64 { self.y as i64 }
 }
 
 impl<const MOD: u32> From<Gaussian> for GaussianF<MOD> {
     fn from(g: Gaussian) -> GaussianF<MOD> {
-        GaussianF::new(g.x, g.y)
+        GaussianF::new_signed(g.x, g.y)
     }
 }
 
 impl<const MOD: u32> Into<Gaussian> for GaussianF<MOD> {
     fn into(self) -> Gaussian {
-        Gaussian::new(self.x, self.y)
+        Gaussian::new(self.x as i64, self.y as i64)
     }
 }
 
