@@ -2,7 +2,6 @@ use num_traits::{One, Pow};
 use crate::core::fields::cm31::CM31;
 use crate::core::fields::{m31, ComplexConjugate};
 use crate::core::fields::m31::M31;
-use super::gaussian::Gaussian;
 use super::{PowMod, RemEuclid, Xy};
 
 /// A gaussian (complex) number, x is the real part, y is imaginary.
@@ -57,16 +56,3 @@ impl Xy for CM31 {
     fn x(&self) -> i128 { self.0.0 as i128 }
     fn y(&self) -> i128 { self.1.0 as i128 }
 }
-
-impl From<Gaussian> for CM31 {
-    fn from(g: Gaussian) -> CM31 {
-        CM31(M31(g.x.rem_euclid(m31::P as i128) as u32), M31(g.y.rem_euclid(m31::P as i128) as u32))
-    }
-}
-
-impl Into<Gaussian> for CM31 {
-    fn into(self) -> Gaussian {
-        Gaussian::new(self.x(), self.y())
-    }
-}
-

@@ -10,7 +10,6 @@ mod stir;
 mod fft;
 mod merkle_trees;
 mod poly_utils;
-mod gaussian;
 mod gaussian_field;
 
 trait Xy {
