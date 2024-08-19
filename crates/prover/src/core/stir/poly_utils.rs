@@ -104,12 +104,12 @@ impl PrimeField {
     }
 
     /// Evaluate a circular polynomial at a point
-    pub fn eval_circ_poly_at<F: KindaField>(&self, p: &[Vec<i128>], pt: F) -> i128 {
+    pub fn eval_circ_poly_at<F: Xy>(&self, p: &[Vec<i128>], pt: &F) -> i128 {
         self.add(self.eval_poly_at(&p[0], pt.x()), self.eval_poly_at(&p[1], pt.x()) * pt.y())
     }
 
     /// Create a line polynomial between two points
-    fn line<F: KindaField>(&self, pt1: F, pt2: F) -> Vec<Vec<i128>> {
+    fn line<F: Xy>(&self, pt1: &F, pt2: &F) -> Vec<Vec<i128>> {
         let dx = self.sub(pt1.x(), pt2.x());
         if dx == 0 {
             return vec![vec![pt1.x(), self.modulus as i128 - 1], vec![]];
@@ -122,10 +122,10 @@ impl PrimeField {
     }
 
     /// Build a circular polynomial that returns 0 at all specified points
-    pub fn circ_zpoly<F: KindaField>(&self, pts: &[F], nzero: Option<&F> /* default = None */) -> Vec<Vec<i128>> {
+    pub fn circ_zpoly<F: Xy>(&self, pts: &[F], nzero: Option<&F> /* default = None */) -> Vec<Vec<i128>> {
         let mut ans = vec![vec![1], vec![]];
         for i in 0..pts.len() / 2 {
-            ans = self.mul_circ_polys(&ans, &self.line(pts[2 * i], pts[2 * i + 1]));
+            ans = self.mul_circ_polys(&ans, &self.line(&pts[2 * i], &pts[2 * i + 1]));
         }
         if pts.len() % 2 == 1 {
             match nzero {
@@ -141,7 +141,7 @@ impl PrimeField {
     }
 
     /// Circular Lagrange interpolation
-    pub fn circ_lagrange_interp<F: KindaField>(&self, pts: &[F], vals: &[i128], normalize: bool /* default = false */) -> Vec<Vec<i128>> {
+    pub fn circ_lagrange_interp<F: Xy + Copy>(&self, pts: &[F], vals: &[i128], normalize: bool /* default = false */) -> Vec<Vec<i128>> {
         let mul_by_const = |a: &[i128], c: i128| -> Vec<i128> {
             a.iter().map(|&x| (x * c).rem_euclid(self.modulus as i128)).collect()
         };
@@ -154,7 +154,7 @@ impl PrimeField {
         let mut ans = vec![vec![], vec![]];
         for i in 0..pts.len() {
             let pol = self.circ_zpoly(&[&pts[..i], &pts[i + 1..]].concat(), Some(&pts[i]));
-            let scale = self.div(vals[i], self.eval_circ_poly_at(&pol, pts[i]));
+            let scale = self.div(vals[i], self.eval_circ_poly_at(&pol, &pts[i]));
             ans = self.add_circ_polys(&ans, &mul_circ_by_const(&pol, scale));
         }
         if normalize && pts.len() % 2 == 0 {

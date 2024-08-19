@@ -3,6 +3,9 @@
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Euclid, NumOps, One, Pow, ToPrimitive};
+use crate::core::fields::cm31::CM31;
+use crate::core::fields::{m31, ComplexConjugate};
+use crate::core::fields::m31::M31;
 
 #[allow(dead_code)]
 
@@ -10,7 +13,6 @@ mod stir;
 mod fft;
 mod merkle_trees;
 mod poly_utils;
-mod gaussian_field;
 
 trait Xy {
     fn x(&self) -> i128;
@@ -92,4 +94,41 @@ fn get_power_cycle<F: KindaField>(r: F, offset: F) -> Vec<F> {
     }
 
     o
+}
+
+impl CM31 {
+    pub fn new(x: u64, y: u64) -> Self {
+        Self(M31(x.rem_euclid(m31::P as u64) as u32), M31(y.rem_euclid(m31::P as u64) as u32))
+    }
+
+    pub fn conj(self, parity: u64 /* default = 1 */) -> Self {
+        if parity % 2 == 0 {
+            self
+        } else {
+            self.complex_conjugate()
+        }
+    }
+}
+
+impl Pow<u32> for CM31 {
+    type Output = Self;
+
+    fn pow(self, exp: u32) -> Self::Output {
+        let mut ans = Self::one();
+        let mut v = self;
+        let mut exp = exp;
+        while exp != 0 {
+            if exp % 2 == 1 {
+                ans = ans * v;
+            }
+            v = v * v;
+            exp = exp / 2;
+        }
+        ans
+    }
+}
+
+impl Xy for CM31 {
+    fn x(&self) -> i128 { self.0.0 as i128 }
+    fn y(&self) -> i128 { self.1.0 as i128 }
 }

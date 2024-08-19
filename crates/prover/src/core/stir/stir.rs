@@ -108,7 +108,7 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
             (0..=1).flat_map(|l| {
                 (0..folded_len).map(|k| {
                     let mul = r_fold * xs[k + params.eval_sizes[i - 1] * l].conj(1);
-                    f.eval_circ_poly_at(&x_polys[k + folded_len * l], mul)
+                    f.eval_circ_poly_at(&x_polys[k + folded_len * l], &mul)
                 }).collect_vec()
             })
                 .collect_vec();
@@ -180,14 +180,14 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
         m = m2;
 
         let pol = f.circ_lagrange_interp(&rs, &g_rs, false);
-        let pol_vals = xs.iter().map(|&x| f.eval_circ_poly_at(&pol, x)).collect_vec();
+        let pol_vals = xs.iter().map(|&x| f.eval_circ_poly_at(&pol, &x)).collect_vec();
         let zpol = f.circ_zpoly(&rs, None);
 
         vals = (0..(2 * params.eval_sizes[i]))
             .map(|j| {
                 f.div(
                     g_hat_shift[j] - pol_vals[j],
-                    f.eval_circ_poly_at(&zpol, xs[j]),
+                    f.eval_circ_poly_at(&zpol, &xs[j]),
                 ) * f.geom_sum((xs[j] * r_comb).x(), rs.len() as u64)
             })
             .collect_vec();
@@ -348,14 +348,14 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
                         let x = (rt.pow(ind as u32) * params.eval_offsets[i - 1])
                             .conj(t_conj[k] as u64);
 
-                        f.div(val - f.eval_circ_poly_at(pol, x),
-                              f.eval_circ_poly_at(zpol, x)) * f.geom_sum((x * r_comb).x(), rs.len() as u64)
+                        f.div(val - f.eval_circ_poly_at(pol, &x),
+                              f.eval_circ_poly_at(zpol, &x)) * f.geom_sum((x * r_comb).x(), rs.len() as u64)
                     }
                     None => val,
                 };
                 vals.push(new_val);
             }
-            let new_g_hat = f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), r_fold * x0.conj(1));
+            let new_g_hat = f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.conj(1)));
             g_hat.push(new_g_hat);
         }
 
@@ -425,12 +425,12 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
             let x = (rt.pow(ind as u32) * last_eval_offset)
                 .conj(t_conj[k] as u64);
             vals.push(f.div(
-                val - f.eval_circ_poly_at(&pol.as_ref().unwrap(), x),
-                f.eval_circ_poly_at(zpol.as_ref().unwrap(), x),
+                val - f.eval_circ_poly_at(&pol.as_ref().unwrap(), &x),
+                f.eval_circ_poly_at(zpol.as_ref().unwrap(), &x),
             ) * f.geom_sum((x * r_comb.unwrap()).x(), rs.len() as u64));
         }
 
-        reject_unless_eq!(f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), r_fold * x0.conj(1)),
+        reject_unless_eq!(f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.conj(1))),
                           fft_inv(&g_pol, params.modulus, GaussianF::new(1,0),
                                   (rt2.pow(t_shifts[k] as u32) * last_eval_offset.pow(last_folding_param as u32))
                                       .conj(t_conj[k] as u64))[0]);
