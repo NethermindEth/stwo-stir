@@ -2,7 +2,7 @@
 
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
-use num_traits::{Euclid, NumOps, One, ToPrimitive};
+use num_traits::{Euclid, NumOps, One, Pow, ToPrimitive};
 
 #[allow(dead_code)]
 
@@ -17,9 +17,9 @@ trait Xy {
     fn y(&self) -> i128;
 }
 
-trait KindaField: NumOps<Self> + PartialEq + Xy + PowMod + RemEuclid + One + Copy {}
+trait KindaField: NumOps<Self> + PartialEq + Xy + Pow<u32, Output = Self> + One + Copy {}
 
-impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + PowMod + RemEuclid + One + Copy {}
+impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + Pow<u32, Output = Self> + One + Copy {}
 
 fn to_32_be_bytes(x: i128) -> [u8; 32] {
     let mut res = [0; 32];
@@ -81,10 +81,10 @@ fn inv(a: i128, modulus: u32) -> i128 {
     lm.rem_euclid(modulus)
 }
 
-fn get_power_cycle<F: KindaField>(r: F, modulus: u32, offset: F) -> Vec<F> {
+fn get_power_cycle<F: KindaField>(r: F, offset: F) -> Vec<F> {
     let mut o = vec![offset];
     loop {
-        let next = (o[o.len() - 1] * r).rem_euclid(modulus);
+        let next = o[o.len() - 1] * r;
         if next == offset {
             break;
         }
@@ -92,24 +92,4 @@ fn get_power_cycle<F: KindaField>(r: F, modulus: u32, offset: F) -> Vec<F> {
     }
 
     o
-}
-
-pub trait PowMod {
-    fn pow_mod(self, exp: u32, modulus: u32) -> Self;
-}
-
-impl PowMod for i64 {
-    fn pow_mod(self, exp: u32, modulus: u32) -> i64 {
-        BigInt::from(self).modpow(&BigInt::from(exp), &BigInt::from(modulus)).to_i64().unwrap()
-    }
-}
-
-pub trait RemEuclid {
-    fn rem_euclid(self, modulus: u32) -> Self;
-}
-
-impl RemEuclid for i128 {
-    fn rem_euclid(self, modulus: u32) -> i128 {
-        Euclid::rem_euclid(&self, &(modulus as i128))
-    }
 }

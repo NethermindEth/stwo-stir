@@ -2,7 +2,7 @@ use num_traits::{One, Pow};
 use crate::core::fields::cm31::CM31;
 use crate::core::fields::{m31, ComplexConjugate};
 use crate::core::fields::m31::M31;
-use super::{PowMod, RemEuclid, Xy};
+use super::{Xy};
 
 /// A gaussian (complex) number, x is the real part, y is imaginary.
 impl CM31 {
@@ -34,21 +34,6 @@ impl Pow<u32> for CM31 {
             exp = exp / 2;
         }
         ans
-    }
-}
-
-impl PowMod for CM31 {
-    fn pow_mod(self, exp: u32, modulus: u32) -> Self {
-        assert_eq!(m31::P, modulus);
-        self.pow(exp)
-    }
-}
-
-impl RemEuclid for CM31 {
-    fn rem_euclid(self, modulus: u32) -> Self {
-        // No need to do anything
-        assert_eq!(m31::P, modulus);
-        self
     }
 }
 

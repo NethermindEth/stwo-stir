@@ -3,7 +3,7 @@ use super::*;
 
 /// Uses twin coset
 pub fn fft_inv<F: KindaField>(coefs: &[i128], modulus: u32, root_of_unity: F, offset: F) -> Vec<i128> {
-    let rootz = get_power_cycle(root_of_unity, modulus, offset);
+    let rootz = get_power_cycle(root_of_unity, offset);
     let xs: Vec<i128> = rootz.iter().map(|r| r.x()).collect();
     let even = x_fft_inv(&coefs.iter().step_by(2).cloned().collect::<Vec<_>>(), modulus, &xs);
     let odd = x_fft_inv(&coefs.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(), modulus, &xs);
@@ -55,7 +55,7 @@ fn x_fft_inv(coefs: &[i128], modulus: u32, xs: &[i128]) -> Vec<i128> {
 
 /// Uses twin coset
 pub fn fft<F: KindaField>(vals: &[i128], modulus: u32, root_of_unity: F, offset: F) -> Vec<i128> {
-    let rootz = get_power_cycle(root_of_unity, modulus, offset);
+    let rootz = get_power_cycle(root_of_unity, offset);
     let xs: Vec<i128> = rootz.iter().map(|r| r.x()).collect();
     let half = (modulus as i128 + 1) / 2;
     let new_len = vals.len() / 2;
@@ -109,7 +109,7 @@ pub fn shift_domain<F: KindaField>(
     factor: F,
     expand: u32, /* default = 1*/
 ) -> Vec<i128> {
-    fft_inv(&fft(vals, modulus, root_of_unity.pow_mod(expand, modulus), offset), modulus, root_of_unity, factor)
+    fft_inv(&fft(vals, modulus, root_of_unity.pow(expand), offset), modulus, root_of_unity, factor)
 }
 
 /// Evaluates f(x) for f in evaluation form

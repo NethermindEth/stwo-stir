@@ -1,6 +1,5 @@
 //! Translated from Nethermind STIR's poly_utils.py
 
-use std::ops::{Mul};
 use super::*;
 
 /// An object that includes convenience operations for numbers
@@ -11,7 +10,6 @@ pub struct PrimeField {
 
 impl PrimeField {
     pub fn new(modulus: u32) -> Self {
-        assert_eq!(2_i64.pow_mod(modulus, modulus), 2);
         Self { modulus }
     }
 
@@ -23,23 +21,15 @@ impl PrimeField {
         (x - y).rem_euclid(self.modulus as i128)
     }
 
-    pub fn mul<T: Mul<Output = T> + RemEuclid>(&self, x: T, y: T) -> T {
-        (x.rem_euclid(self.modulus) * y.rem_euclid(self.modulus)).rem_euclid(self.modulus)
-    }
-
     // can be simplified using the formula
     pub fn geom_sum(&self, x: i128, p: u64) -> i128 {
         let mut ans = 1;
         let mut prod = 1;
         for _ in 0..p {
-            prod = self.mul(prod, x);
+            prod = prod * x;
             ans = self.add(ans, prod);
         }
         ans
-    }
-
-    pub fn exp<T: PowMod>(&self, x: T, p: u32) -> T {
-        x.pow_mod(p, self.modulus)
     }
 
     /// Modular inverse using the extended Euclidean algorithm
@@ -48,7 +38,7 @@ impl PrimeField {
     }
 
     pub fn div(&self, x: i128, y: i128) -> i128 {
-        self.mul(x, self.inv(y))
+        (x * self.inv(y)).rem_euclid(self.modulus as i128)
     }
 
     /// Evaluate a polynomial at a point
@@ -81,10 +71,6 @@ impl PrimeField {
             .collect()
     }
 
-    pub fn mul_by_const(&self, a: &[i128], c: i128) -> Vec<i128> {
-        a.iter().map(|&x| (x * c).rem_euclid(self.modulus as i128)).collect()
-    }
-
     fn mul_polys(&self, a: &[i128], b: &[i128]) -> Vec<i128> {
         let mut o = vec![0; a.len() + b.len() - 1];
         for (i, &aval) in a.iter().enumerate() {
@@ -103,10 +89,6 @@ impl PrimeField {
 
     fn sub_circ_polys(&self, a: &[Vec<i128>], b: &[Vec<i128>]) -> Vec<Vec<i128>> {
         vec![self.sub_polys(&a[0], &b[0]), self.sub_polys(&a[1], &b[1])]
-    }
-
-    fn mul_circ_by_const(&self, a: &[Vec<i128>], c: i128) -> Vec<Vec<i128>> {
-        vec![self.mul_by_const(&a[0], c), self.mul_by_const(&a[1], c)]
     }
 
     /// Multiply two circular polynomials
@@ -160,19 +142,27 @@ impl PrimeField {
 
     /// Circular Lagrange interpolation
     pub fn circ_lagrange_interp<F: KindaField>(&self, pts: &[F], vals: &[i128], normalize: bool /* default = false */) -> Vec<Vec<i128>> {
+        let mul_by_const = |a: &[i128], c: i128| -> Vec<i128> {
+            a.iter().map(|&x| (x * c).rem_euclid(self.modulus as i128)).collect()
+        };
+        let mul_circ_by_const = |a: &[Vec<i128>], c: i128| -> Vec<Vec<i128>> {
+            vec![mul_by_const(&a[0], c),
+                 mul_by_const(&a[1], c)]
+        };
+
         assert_eq!(pts.len(), vals.len());
         let mut ans = vec![vec![], vec![]];
         for i in 0..pts.len() {
             let pol = self.circ_zpoly(&[&pts[..i], &pts[i + 1..]].concat(), Some(&pts[i]));
             let scale = self.div(vals[i], self.eval_circ_poly_at(&pol, pts[i]));
-            ans = self.add_circ_polys(&ans, &self.mul_circ_by_const(&pol, scale));
+            ans = self.add_circ_polys(&ans, &mul_circ_by_const(&pol, scale));
         }
         if normalize && pts.len() % 2 == 0 {
             let d = pts.len() / 2;
             let zpol = self.circ_zpoly(pts, None);
             let coef_a = if ans[1].len() >= d { ans[1][d - 1] } else { 0 };
             let scale = self.div(coef_a, zpol[1][d - 1]);
-            ans = self.sub_circ_polys(&ans, &self.mul_circ_by_const(&zpol, scale));
+            ans = self.sub_circ_polys(&ans, &mul_circ_by_const(&zpol, scale));
         }
         ans
     }
