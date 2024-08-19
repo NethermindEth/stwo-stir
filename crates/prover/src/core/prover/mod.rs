@@ -7,7 +7,7 @@ use super::air::AirProver;
 use super::backend::Backend;
 use super::fields::secure_column::SECURE_EXTENSION_DEGREE;
 use super::fri::FriVerificationError;
-use super::pcs::{CommitmentSchemeProof, TreeVec};
+use super::pcs::{CommitmentSchemeProof, PolynomialProver, PolynomialVerifier, TreeVec};
 use super::poly::circle::MAX_CIRCLE_DOMAIN_LOG_SIZE;
 use super::proof_of_work::ProofOfWorkVerificationError;
 use super::{ColumnVec, InteractionElements, LookupValues};
@@ -35,10 +35,10 @@ pub const PROOF_OF_WORK_BITS: u32 = 12;
 pub const N_QUERIES: usize = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct StarkProof {
+pub struct StarkProof<P> {
     pub commitments: TreeVec<<ChannelHasher as Hasher>::Hash>,
     pub lookup_values: LookupValues,
-    pub commitment_scheme_proof: CommitmentSchemeProof,
+    pub commitment_scheme_proof: CommitmentSchemeProof<P>,
 }
 
 #[derive(Debug)]
@@ -49,12 +49,16 @@ pub struct AdditionalProofData {
     pub oods_quotients: Vec<CircleEvaluation<CpuBackend, SecureField, BitReversedOrder>>,
 }
 
-pub fn prove<B: Backend + MerkleOps<MerkleHasher>>(
+pub fn prove<B, Proof>(
     air: &impl AirProver<B>,
     channel: &mut Channel,
     interaction_elements: &InteractionElements,
-    commitment_scheme: &mut CommitmentSchemeProver<'_, B>,
-) -> Result<StarkProof, ProvingError> {
+    commitment_scheme: &mut CommitmentSchemeProver<'_, B, Proof>,
+) -> Result<StarkProof<Proof>, ProvingError>
+where
+    B: Backend + MerkleOps<MerkleHasher>,
+    for<'a> CommitmentSchemeProver<'a, B, Proof>: PolynomialProver<Channel, Proof>,
+{
     let component_traces = air.component_traces(&commitment_scheme.trees);
     let lookup_values = air.lookup_values(&component_traces);
 
@@ -110,13 +114,16 @@ pub fn prove<B: Backend + MerkleOps<MerkleHasher>>(
     })
 }
 
-pub fn verify(
+pub fn verify<Proof>(
     air: &impl Air,
-    channel: &mut Blake2sChannel,
+    channel: &mut Channel,
     interaction_elements: &InteractionElements,
-    commitment_scheme: &mut CommitmentSchemeVerifier,
-    proof: StarkProof,
-) -> Result<(), VerificationError> {
+    commitment_scheme: &mut CommitmentSchemeVerifier<Proof>,
+    proof: StarkProof<Proof>,
+) -> Result<(), VerificationError>
+where
+    CommitmentSchemeVerifier<Proof>: PolynomialVerifier<Channel, Proof>,
+{
     let random_coeff = channel.draw_felt();
 
     // Read composition polynomial commitment.

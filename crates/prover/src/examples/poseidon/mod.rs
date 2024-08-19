@@ -19,7 +19,7 @@ use crate::core::channel::{Blake2sChannel, Channel as _};
 use crate::core::fields::m31::BaseField;
 use crate::core::fields::qm31::SecureField;
 use crate::core::fields::{FieldExpOps, IntoSlice};
-use crate::core::pcs::CommitmentSchemeProver;
+use crate::core::pcs::{CommitmentSchemeProver, PolynomialProver};
 use crate::core::poly::circle::{CanonicCoset, CircleEvaluation, PolyOps};
 use crate::core::poly::BitReversedOrder;
 use crate::core::prover::{prove, StarkProof, LOG_BLOWUP_FACTOR};
@@ -343,7 +343,10 @@ pub fn gen_interaction_trace(
     logup_gen.finalize()
 }
 
-pub fn prove_poseidon(log_n_instances: u32) -> (PoseidonAir, StarkProof) {
+pub fn prove_poseidon<Proof>(log_n_instances: u32) -> (PoseidonAir, StarkProof<Proof>)
+where
+    for<'a> CommitmentSchemeProver<'a, SimdBackend, Proof>: PolynomialProver<Blake2sChannel, Proof>,
+{
     assert!(log_n_instances >= N_LOG_INSTANCES_PER_ROW as u32);
     let log_n_rows = log_n_instances - N_LOG_INSTANCES_PER_ROW as u32;
 
@@ -393,7 +396,7 @@ pub fn prove_poseidon(log_n_instances: u32) -> (PoseidonAir, StarkProof) {
         claimed_sum,
     };
     let air = PoseidonAir { component };
-    let proof = prove::<SimdBackend>(
+    let proof = prove::<SimdBackend, Proof>(
         &air,
         channel,
         &InteractionElements::default(),
