@@ -1,10 +1,11 @@
 //! This module contains the core STIR implementation adapted from Python PoC made by Nethermind.
 
+use std::ops::Mul;
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
-use num_traits::{Euclid, NumOps, One, ToPrimitive};
+use num_traits::{Euclid, ToPrimitive};
 use crate::core::fields::cm31::CM31;
-use crate::core::fields::{m31, FieldExpOps};
+use crate::core::fields::{m31, Field};
 use crate::core::fields::m31::M31;
 
 #[allow(dead_code)]
@@ -19,9 +20,9 @@ trait Xy {
     fn y(&self) -> i128;
 }
 
-trait KindaField: NumOps<Self> + PartialEq + Xy + FieldExpOps + One + Copy {}
+trait StirField: Field + Xy + Mul<u32, Output = Self> {}
 
-impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + FieldExpOps + One + Copy {}
+impl<F> StirField for F where F: Field + Xy + Mul<u32, Output = F> {}
 
 fn to_32_be_bytes(x: i128) -> [u8; 32] {
     let mut res = [0; 32];
@@ -68,22 +69,7 @@ fn get_pseudorandom_indices(
     ans
 }
 
-fn inv(a: i128, modulus: u32) -> i128 {
-    let modulus = modulus as i128;
-    let (mut lm, mut hm) = (1, 0);
-    let (mut low, mut high) = (a.rem_euclid(modulus), modulus);
-    if low == 0 {
-        panic!("ZeroDivisionError");
-    }
-    while low > 1 {
-        let r = high / low;
-        let (nm, new) = (hm - lm * r, high - low * r);
-        (lm, low, hm, high) = (nm, new, lm, low);
-    }
-    lm.rem_euclid(modulus)
-}
-
-fn get_power_cycle<F: KindaField>(r: F, offset: F) -> Vec<F> {
+fn get_power_cycle<F: StirField>(r: F, offset: F) -> Vec<F> {
     let mut o = vec![offset];
     loop {
         let next = o[o.len() - 1] * r;
@@ -99,6 +85,14 @@ fn get_power_cycle<F: KindaField>(r: F, offset: F) -> Vec<F> {
 impl CM31 {
     pub fn new(x: u64, y: u64) -> Self {
         Self(M31(x.rem_euclid(m31::P as u64) as u32), M31(y.rem_euclid(m31::P as u64) as u32))
+    }
+}
+
+impl Mul<u32> for CM31 {
+    type Output = Self;
+
+    fn mul(self, rhs: u32) -> Self::Output {
+        self * M31(rhs)
     }
 }
 

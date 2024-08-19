@@ -34,7 +34,18 @@ impl PrimeField {
 
     /// Modular inverse using the extended Euclidean algorithm
     pub fn inv(&self, a: i128) -> i128 {
-        inv(a, self.modulus)
+        let modulus = self.modulus as i128;
+        let (mut lm, mut hm) = (1, 0);
+        let (mut low, mut high) = (a.rem_euclid(modulus), modulus);
+        if low == 0 {
+            panic!("ZeroDivisionError");
+        }
+        while low > 1 {
+            let r = high / low;
+            let (nm, new) = (hm - lm * r, high - low * r);
+            (lm, low, hm, high) = (nm, new, lm, low);
+        }
+        lm.rem_euclid(modulus)
     }
 
     pub fn div(&self, x: i128, y: i128) -> i128 {

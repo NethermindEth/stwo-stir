@@ -1,10 +1,10 @@
 //! This is the implementation of a circle modification of STIR algorithm from scratch,
 //! moved from Python trying to keep it close to the original implementation.
+
 use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
-use num_traits::{One, ToPrimitive};
-use crate::core::fields::cm31::CM31;
-use crate::core::fields::{ComplexConjugate, Field};
+use num_traits::{Euclid, ToPrimitive};
+use crate::core::fields::{ComplexConjugate};
 use super::*;
 use super::fft::*;
 use super::merkle_trees::*;
@@ -26,15 +26,13 @@ struct Parameters<T> {
 #[derive(Debug)]
 struct Proof(Vec<u8>);
 
-type GaussianF = CM31;
-
 /// Generate an STIR proof that the polynomial that has the specified
 /// values at successive powers of the specified root of unity has a
 /// degree lower than maxdeg\_plus\_1
 ///
 /// We use maxdeg\+1 instead of maxdeg because it's more mathematically
 /// convenient in this case.
-fn prove_low_degree<F: Field + Xy>(values: &[i128], params: &Parameters<F>, is_fake: bool) -> Proof {
+fn prove_low_degree<F: StirField>(values: &[i128], params: &Parameters<F>, is_fake: bool) -> Proof {
     let f = PrimeField::new(params.modulus);
     if is_fake {
         println!("Faking proof {} values are degree <= {}", values.len(), params.maxdeg_plus_1);
@@ -241,7 +239,7 @@ fn make_oracle_branches(
     result
 }
 
-fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> bool {
+fn verify_low_degree_proof<F: StirField>(proof: &Proof, params: &Parameters<F>) -> bool {
     macro_rules! reject_unless_eq {
         ($lhs:expr,$rhs:expr) => { if $lhs != $rhs { return false; } };
     }
@@ -253,8 +251,8 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
     let mut rt = params.root_of_unity;
 
-    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128), GaussianF::one());
-    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128 / 2), GaussianF::new(params.modulus as u64 - 1, 0));
+    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128), F::one());
+    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128 / 2), F::one() * (params.modulus - 1));
 
     let mut proof_pos = 0;
     let m_root = &proof.0[proof_pos..(proof_pos + 32)];
@@ -267,9 +265,9 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         );
 
     let mut pol: Option<Vec<Vec<i128>>> = None;
-    let mut rs: Option<Vec<GaussianF>> = None;
+    let mut rs: Option<Vec<F>> = None;
     let mut zpol: Option<Vec<Vec<i128>>> = None;
-    let mut r_comb: Option<GaussianF> = None;
+    let mut r_comb: Option<F> = None;
     let mut m_root: Option<&[u8]> = None;
 
     for i in 1..params.folding_params.len() {
@@ -304,7 +302,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
-        let rs_new: Vec<GaussianF> = r_outs.iter().cloned()
+        let rs_new: Vec<F> = r_outs.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
                 .map(|(&t, &k)| conjugate_with_parity(p_offset * rt2.pow(t as u128), k)))
             .collect_vec();
@@ -322,7 +320,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
         let rt2 = rt.pow(folded_len as u128);
         let xs2s = {
-            let mut res = vec![get_power_cycle(rt2, GaussianF::new(1, 0))];
+            let mut res = vec![get_power_cycle(rt2, F::one())];
             res.push(res[0].clone());
             (&mut res[1][1..]).reverse();
             res
@@ -406,7 +404,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
     let rt3 = rt.pow(folded_len as u128);
     let xs2s = {
-        let mut res = vec![get_power_cycle(rt3, GaussianF::new(1, 0))];
+        let mut res = vec![get_power_cycle(rt3, F::one())];
         res.push(res[0].clone());
         (&mut res[1][1..]).reverse();
         res
@@ -431,7 +429,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         }
 
         reject_unless_eq!(f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.complex_conjugate())),
-                          fft_inv(&g_pol, params.modulus, GaussianF::new(1,0),
+                          fft_inv(&g_pol, params.modulus, F::one(),
                                   conjugate_with_parity(rt2.pow(t_shifts[k] as u128) * last_eval_offset.pow(last_folding_param as u128),
                                                         t_conj[k]))[0]);
     }
@@ -440,7 +438,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
     true
 }
 
-fn get_pseudorandom_element_outside_coset_circle<F: KindaField>(
+fn get_pseudorandom_element_outside_coset_circle<F: StirField>(
     seed: &[u8],
     modulus: u32,
     prim_root: F,
@@ -479,14 +477,14 @@ fn conjugate_with_parity<F: ComplexConjugate>(f: F, parity: usize) -> F {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::fields::m31;
+    use crate::core::fields::{m31, FieldExpOps};
     use super::super::fft::fft_inv;
     use super::*;
 
     #[test]
     fn test_circle_stir() {
         const MODULUS: u32 = m31::P;
-        let prim_root = GaussianF::new(311014874, 1584694829);
+        let prim_root = CM31::new(311014874, 1584694829);
         let root_of_unity = prim_root.pow(((MODULUS + 1) / 2_u32.pow(10 + 2)) as u128);
         let log_d = 10;
         let params = generate_parameters(MODULUS, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
@@ -509,19 +507,19 @@ mod tests {
         // }
     }
 
-    fn generate_parameters(
+    fn generate_parameters<F: StirField>(
         modulus: u32,
-        prim_root: GaussianF,
-        root_of_unity: GaussianF,
-        init_offset: GaussianF,
+        prim_root: F,
+        root_of_unity: F,
+        init_offset: F,
         log_d: u32,
         _security_param: u64,
         log_stopping_degree: u64,
         proximity_param: f64,
         log_folding_param: u32,
-    ) -> Parameters<GaussianF> {
+    ) -> Parameters<F> {
         let m = ((log_d as u64 - log_stopping_degree) / log_folding_param as u64) as usize;
-        let size_l = get_power_cycle(root_of_unity, GaussianF::new(1, 0)).len();
+        let size_l = get_power_cycle(root_of_unity, F::one()).len();
         assert!(size_l.is_power_of_two());
         assert!(proximity_param > 0.0 && proximity_param <= 1.0);
 
@@ -532,7 +530,7 @@ mod tests {
         for _ in 1..=m {
             eval_sizes.push(eval_sizes.last().unwrap() / 2);
             eval_offsets.push(rt * init_offset);
-            rt = rt.pow(2);
+            rt = rt.square();
         }
 
         Parameters {
