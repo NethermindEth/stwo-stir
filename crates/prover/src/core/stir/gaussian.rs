@@ -5,12 +5,12 @@ use super::*;
 /// A gaussian (complex) number, x is the real part, y is imaginary.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Gaussian {
-    pub x: i64,
-    pub y: i64,
+    pub x: i128,
+    pub y: i128,
 }
 
 impl Gaussian {
-    pub fn new(x: i64, y: i64) -> Self {
+    pub fn new(x: i128, y: i128) -> Self {
         Self { x, y }
     }
 
@@ -107,11 +107,11 @@ impl PowMod for Gaussian {
 
 impl RemEuclid for Gaussian {
     fn rem_euclid(self, modulus: u32) -> Self {
-        Gaussian { x: self.x.rem_euclid(modulus as i64), y: self.y.rem_euclid(modulus as i64) }
+        Gaussian { x: self.x.rem_euclid(modulus as i128), y: self.y.rem_euclid(modulus as i128) }
     }
 }
 
 impl Xy for Gaussian {
-    fn x(&self) -> i64 { self.x }
-    fn y(&self) -> i64 { self.y }
+    fn x(&self) -> i128 { self.x }
+    fn y(&self) -> i128 { self.y }
 }

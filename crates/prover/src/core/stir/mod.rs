@@ -4,6 +4,8 @@ use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
 use num_traits::{ConstOne, Euclid, NumOps, ToPrimitive};
 
+#[allow(dead_code)]
+
 mod stir;
 mod fft;
 mod merkle_trees;
@@ -12,17 +14,17 @@ mod gaussian;
 mod gaussian_field;
 
 trait Xy {
-    fn x(&self) -> i64;
-    fn y(&self) -> i64;
+    fn x(&self) -> i128;
+    fn y(&self) -> i128;
 }
 
 trait KindaField: NumOps<Self> + PartialEq + Xy + PowMod + RemEuclid + ConstOne + Copy {}
 
 impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + PowMod + RemEuclid + ConstOne + Copy {}
 
-fn to_32_be_bytes(x: i64) -> [u8; 32] {
+fn to_32_be_bytes(x: i128) -> [u8; 32] {
     let mut res = [0; 32];
-    res[24..].copy_from_slice(&x.to_be_bytes());
+    res[16..].copy_from_slice(&x.to_be_bytes());
     res
 }
 
@@ -38,14 +40,13 @@ fn get_pseudorandom_indices(
     start: usize,
     exclude: &mut Vec<usize>,
 ) -> Vec<usize> {
-    assert!(modulus < 2_u32.pow(24)); // inherited from Vitalik's code, not sure if this is needed.
     let mut ans = Vec::new();
     for c in start..(count + start) {
         exclude.sort();
         let exclude2: Vec<usize> = exclude.iter().enumerate().map(|(i, &x)| x - i).collect();
         let val = BigInt::from_bytes_be(
             Sign::Plus,
-            &blake(&[&to_32_be_bytes(c as i64), seed].concat()),
+            &blake(&[&to_32_be_bytes(c as i128), seed].concat()),
         ).rem_euclid(
             &BigInt::from(modulus - exclude.len() as u32)
         ).to_usize().unwrap();
@@ -66,8 +67,8 @@ fn get_pseudorandom_indices(
     ans
 }
 
-fn inv(a: i64, modulus: u32) -> i64 {
-    let modulus = modulus as i64;
+fn inv(a: i128, modulus: u32) -> i128 {
+    let modulus = modulus as i128;
     let (mut lm, mut hm) = (1, 0);
     let (mut low, mut high) = (a.rem_euclid(modulus), modulus);
     if low == 0 {
@@ -108,8 +109,8 @@ pub trait RemEuclid {
     fn rem_euclid(self, modulus: u32) -> Self;
 }
 
-impl RemEuclid for i64 {
-    fn rem_euclid(self, modulus: u32) -> i64 {
-        Euclid::rem_euclid(&self, &(modulus as i64))
+impl RemEuclid for i128 {
+    fn rem_euclid(self, modulus: u32) -> i128 {
+        Euclid::rem_euclid(&self, &(modulus as i128))
     }
 }

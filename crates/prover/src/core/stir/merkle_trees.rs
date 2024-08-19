@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub fn merkelize(l: &[i64]) -> Vec<Vec<u8>> {
+pub fn merkelize(l: &[i128]) -> Vec<Vec<u8>> {
     let mut nodes: Vec<Vec<u8>> = vec![vec![0; 32]; l.len()];
     nodes.extend(l.iter().map(|&x| to_32_be_bytes(x).to_vec()));
     for i in (1..l.len()).rev() {
