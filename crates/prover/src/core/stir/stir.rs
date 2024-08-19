@@ -2,8 +2,9 @@
 //! moved from Python trying to keep it close to the original implementation.
 use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
-use num_traits::{One, Pow, ToPrimitive};
+use num_traits::{One, ToPrimitive};
 use crate::core::fields::cm31::CM31;
+use crate::core::fields::{ComplexConjugate, Field};
 use super::*;
 use super::fft::*;
 use super::merkle_trees::*;
@@ -33,7 +34,7 @@ type GaussianF = CM31;
 ///
 /// We use maxdeg\+1 instead of maxdeg because it's more mathematically
 /// convenient in this case.
-fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bool) -> Proof {
+fn prove_low_degree<F: Field + Xy>(values: &[i128], params: &Parameters<F>, is_fake: bool) -> Proof {
     let f = PrimeField::new(params.modulus);
     if is_fake {
         println!("Faking proof {} values are degree <= {}", values.len(), params.maxdeg_plus_1);
@@ -50,10 +51,11 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
     let mut rt = params.root_of_unity;
     let mut vals = values.to_vec();
     // Calculate the set of x coordinates
+    rt.pow(123);
     let mut xs = get_power_cycle(rt, params.eval_offsets[0]);
     {
         let xs_added =
-            xs.iter().cloned().map(|x| x.conj(1)).collect_vec();
+            xs.iter().cloned().map(|x| x.complex_conjugate()).collect_vec();
         xs.extend(&xs_added);
     }
     assert_eq!(values.len(), xs.len());
@@ -66,7 +68,7 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
     // Select a pseudo-random field element
     // r_fold = f.exp(prim_root, int.from_bytes(m[1], 'big') % (modulus + 1))
     let mut r_fold = {
-        let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(params.modulus + 1)).to_u32().unwrap();
+        let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(params.modulus + 1)).to_u128().unwrap();
         params.prim_root.pow(pow)
     };
     output.extend_from_slice(&m[1]);
@@ -81,9 +83,9 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
         last_folded_len = Some(folded_len);
 
         // should replace lagrange_interp with an fft?
-        let rt2 = rt.pow(folded_len as u32);
+        let rt2 = rt.pow(folded_len as u128);
         let xs2s = {
-            let mut res = vec![get_power_cycle(rt2, GaussianF::one())];
+            let mut res = vec![get_power_cycle(rt2, F::one())];
             res.push(res[0].clone());
             (&mut res[1][1..]).reverse();
             res
@@ -107,7 +109,7 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
         let g_hat: Vec<i128> =
             (0..=1).flat_map(|l| {
                 (0..folded_len).map(|k| {
-                    let mul = r_fold * xs[k + params.eval_sizes[i - 1] * l].conj(1);
+                    let mul = r_fold * xs[k + params.eval_sizes[i - 1] * l].complex_conjugate();
                     f.eval_circ_poly_at(&x_polys[k + folded_len * l], &mul)
                 }).collect_vec()
             })
@@ -123,9 +125,9 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
         assert_eq!(params.eval_sizes[i - 1] % params.eval_sizes[i], 0);
         let eval_size_scale = params.eval_sizes[i - 1] / params.eval_sizes[i];
 
-        rt = rt.pow(eval_size_scale as u32);
-        let rt2 = rt.pow(expand_factor as u32);
-        let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u32);
+        rt = rt.pow(eval_size_scale as u128);
+        let rt2 = rt.pow(expand_factor as u128);
+        let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u128);
 
         let g_hat_shift = shift_domain(
             &g_hat,
@@ -139,7 +141,7 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
         output.extend_from_slice(&m2[1]);
 
         xs = get_power_cycle(rt, params.eval_offsets[i]);
-        xs.extend(xs.iter().map(|x| x.conj(1)).collect_vec());
+        xs.extend(xs.iter().map(|x| x.complex_conjugate()).collect_vec());
 
         let r_outs = get_pseudorandom_element_outside_coset_circle(
             &output,
@@ -156,16 +158,18 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
             .collect_vec();
         output.extend(betas.iter().flat_map(|&b| to_32_be_bytes(b)));
 
-        r_fold = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 0, &mut vec![])[0] as u32);
-        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 1, &mut vec![])[0] as u32);
+        r_fold = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 0, &mut vec![])[0] as u128);
+        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 1, &mut vec![])[0] as u128);
         let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         assert_eq!((params.ood_rep + params.repetition_params[i - 1]).rem_euclid(2), 0);
 
-        let rs: Vec<GaussianF> = r_outs.iter().cloned()
+        let rs: Vec<F> = r_outs.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
-                .map(|(&t, &k)| (p_offset * rt2.pow(t as u32)).conj(k as u64)))
+                .map(|(&t, &k)| {
+                    conjugate_with_parity(p_offset * rt2.pow(t as u128), k)
+                }))
             .collect_vec();
         let g_rs: Vec<i128> = betas.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
@@ -198,8 +202,8 @@ fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bo
     let last_folding_param = params.folding_params.last().cloned().unwrap();
     let last_eval_offset = params.eval_offsets.last().cloned().unwrap();
     let g_pol = fft(&g_hat, params.modulus,
-                    rt.pow(last_folding_param as u32),
-                    last_eval_offset.pow(last_folding_param as u32));
+                    rt.pow(last_folding_param as u128),
+                    last_eval_offset.pow(last_folding_param as u128));
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
     if !is_fake {
         assert!(g_pol[(2 * final_deg + 1)..].iter().all(|&x| x == 0));
@@ -249,8 +253,8 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
     let mut rt = params.root_of_unity;
 
-    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u32), GaussianF::one());
-    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u32 / 2), GaussianF::new(params.modulus as u64 - 1, 0));
+    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128), GaussianF::one());
+    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128 / 2), GaussianF::new(params.modulus as u64 - 1, 0));
 
     let mut proof_pos = 0;
     let m_root = &proof.0[proof_pos..(proof_pos + 32)];
@@ -259,7 +263,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         params.prim_root.pow(
             BigInt::from_bytes_be(Sign::Plus, m_root)
                 .rem_euclid(&BigInt::from(params.modulus + 1))
-                .to_u32().unwrap(),
+                .to_u128().unwrap(),
         );
 
     let mut pol: Option<Vec<Vec<i128>>> = None;
@@ -276,9 +280,9 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         reject_unless_eq!(params.eval_sizes[i - 1] % params.eval_sizes[i], 0);
         let eval_size_scale = params.eval_sizes[i - 1] / params.eval_sizes[i];
 
-        let rt_new = rt.pow(eval_size_scale as u32);
-        let rt2 = rt_new.pow(expand_factor as u32);
-        let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u32);
+        let rt_new = rt.pow(eval_size_scale as u128);
+        let rt2 = rt_new.pow(expand_factor as u128);
+        let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u128);
 
         let m2_root = &proof.0[proof_pos..proof_pos + 32];
         proof_pos += 32;
@@ -294,15 +298,15 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         }).collect();
         proof_pos += params.ood_rep * 32;
 
-        let r_fold_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 0, &mut vec![])[0] as u32);
-        let r_comb_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 1, &mut vec![])[0] as u32);
+        let r_fold_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 0, &mut vec![])[0] as u128);
+        let r_comb_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 1, &mut vec![])[0] as u128);
 
         let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         let rs_new: Vec<GaussianF> = r_outs.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
-                .map(|(&t, &k)| (p_offset * rt2.pow(t as u32)).conj(k as u64)))
+                .map(|(&t, &k)| conjugate_with_parity(p_offset * rt2.pow(t as u128), k)))
             .collect_vec();
 
         // should we change to storing the log since it should always be a power of 2?
@@ -316,7 +320,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
             oracle_data[(j * branch_len)..((j + 1) * branch_len)].to_vec()
         }).collect();
 
-        let rt2 = rt.pow(folded_len as u32);
+        let rt2 = rt.pow(folded_len as u128);
         let xs2s = {
             let mut res = vec![get_power_cycle(rt2, GaussianF::new(1, 0))];
             res.push(res[0].clone());
@@ -327,8 +331,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
         let mut g_hat = vec![];
         for k in 0_usize..params.repetition_params[i - 1] {
             let mut vals = vec![];
-            let x0 = (rt.pow(t_shifts[k] as u32) * params.eval_offsets[i - 1])
-                .conj(t_conj[k] as u64);
+            let x0 = conjugate_with_parity(rt.pow(t_shifts[k] as u128) * params.eval_offsets[i - 1], t_conj[k]);
             for j in 0_usize..params.folding_params[i - 1] {
                 let branch = &oracle_branches[k * params.folding_params[i - 1] + j];
                 let ind = t_shifts[k] + j * folded_len;
@@ -345,8 +348,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
                         let r_comb = r_comb.unwrap();
                         let zpol = zpol.as_ref().unwrap();
 
-                        let x = (rt.pow(ind as u32) * params.eval_offsets[i - 1])
-                            .conj(t_conj[k] as u64);
+                        let x = conjugate_with_parity(rt.pow(ind as u128) * params.eval_offsets[i - 1], t_conj[k]);
 
                         f.div(val - f.eval_circ_poly_at(pol, &x),
                               f.eval_circ_poly_at(zpol, &x)) * f.geom_sum((x * r_comb).x(), rs.len() as u64)
@@ -355,7 +357,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
                 };
                 vals.push(new_val);
             }
-            let new_g_hat = f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.conj(1)));
+            let new_g_hat = f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.complex_conjugate()));
             g_hat.push(new_g_hat);
         }
 
@@ -384,7 +386,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
     reject_unless_eq!(last_eval_size % last_folding_param, 0);
     let folded_len = last_eval_size / last_folding_param;
-    let rt2 = rt.pow(last_folding_param as u32);
+    let rt2 = rt.pow(last_folding_param as u128);
 
     let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
     let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
@@ -402,7 +404,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
     let rs = rs.as_ref().unwrap();
 
-    let rt3 = rt.pow(folded_len as u32);
+    let rt3 = rt.pow(folded_len as u128);
     let xs2s = {
         let mut res = vec![get_power_cycle(rt3, GaussianF::new(1, 0))];
         res.push(res[0].clone());
@@ -412,8 +414,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
 
     for k in 0_usize..last_repetition_param {
         let mut vals = vec![];
-        let x0 = (rt.pow(t_shifts[k] as u32) * last_eval_offset)
-            .conj(t_conj[k] as u64);
+        let x0 = conjugate_with_parity(rt.pow(t_shifts[k] as u128) * last_eval_offset, t_conj[k]);
         for j in 0..last_folding_param {
             let branch = &oracle_branches[k * last_folding_param + j];
             let ind = t_shifts[k] + j * folded_len;
@@ -422,18 +423,17 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<GaussianF>) -> boo
                 .rem_euclid(&BigInt::from(params.modulus))
                 .to_i128().unwrap();
 
-            let x = (rt.pow(ind as u32) * last_eval_offset)
-                .conj(t_conj[k] as u64);
+            let x = conjugate_with_parity(rt.pow(ind as u128) * last_eval_offset, t_conj[k]);
             vals.push(f.div(
                 val - f.eval_circ_poly_at(&pol.as_ref().unwrap(), &x),
                 f.eval_circ_poly_at(zpol.as_ref().unwrap(), &x),
             ) * f.geom_sum((x * r_comb.unwrap()).x(), rs.len() as u64));
         }
 
-        reject_unless_eq!(f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.conj(1))),
+        reject_unless_eq!(f.eval_circ_poly_at(&f.circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.complex_conjugate())),
                           fft_inv(&g_pol, params.modulus, GaussianF::new(1,0),
-                                  (rt2.pow(t_shifts[k] as u32) * last_eval_offset.pow(last_folding_param as u32))
-                                      .conj(t_conj[k] as u64))[0]);
+                                  conjugate_with_parity(rt2.pow(t_shifts[k] as u128) * last_eval_offset.pow(last_folding_param as u128),
+                                                        t_conj[k]))[0]);
     }
 
     println!("STIR proof verified");
@@ -461,12 +461,20 @@ fn get_pseudorandom_element_outside_coset_circle<F: KindaField>(
         exclude.push(r);
         let t = r + 1 + r / (cofactor as usize - 1);
 
-        let val = prim_root.pow(t as u32) * shift;
-        if (val * shift).pow(coset_size as u32) != F::one() {
+        let val = prim_root.pow(t as u128) * shift;
+        if (val * shift).pow(coset_size as u128) != F::one() {
             ans.push(val);
         }
     }
     ans
+}
+
+fn conjugate_with_parity<F: ComplexConjugate>(f: F, parity: usize) -> F {
+    if parity % 2 == 0 {
+        f
+    } else {
+        f.complex_conjugate()
+    }
 }
 
 #[cfg(test)]
@@ -479,7 +487,7 @@ mod tests {
     fn test_circle_stir() {
         const MODULUS: u32 = m31::P;
         let prim_root = GaussianF::new(311014874, 1584694829);
-        let root_of_unity = prim_root.pow((MODULUS + 1) / 2_u32.pow(10 + 2));
+        let root_of_unity = prim_root.pow(((MODULUS + 1) / 2_u32.pow(10 + 2)) as u128);
         let log_d = 10;
         let params = generate_parameters(MODULUS, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
         println!("{:?}", params);

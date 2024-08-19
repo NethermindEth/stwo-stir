@@ -109,7 +109,7 @@ pub fn shift_domain<F: KindaField>(
     factor: F,
     expand: u32, /* default = 1*/
 ) -> Vec<i128> {
-    fft_inv(&fft(vals, modulus, root_of_unity.pow(expand), offset), modulus, root_of_unity, factor)
+    fft_inv(&fft(vals, modulus, root_of_unity.pow(expand as u128), offset), modulus, root_of_unity, factor)
 }
 
 /// Evaluates f(x) for f in evaluation form
