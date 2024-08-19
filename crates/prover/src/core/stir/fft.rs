@@ -114,5 +114,5 @@ pub fn shift_domain<F: KindaField>(
 
 /// Evaluates f(x) for f in evaluation form
 pub fn inv_fft_at_point<F: KindaField>(vals: &[i128], modulus: u32, root_of_unity: F, offset: F, x: F) -> i128 {
-    fft_inv(&fft(vals, modulus, root_of_unity, offset), modulus, F::ONE, x)[0]
+    fft_inv(&fft(vals, modulus, root_of_unity, offset), modulus, F::one(), x)[0]
 }

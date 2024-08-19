@@ -1,9 +1,9 @@
 //! This is the implementation of a circle modification of STIR algorithm from scratch,
-//! moved from Pyhton trying to keep it close to the original implementation.
+//! moved from Python trying to keep it close to the original implementation.
 use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
-use num_traits::{ConstOne, Pow, ToPrimitive};
-use crate::core::stir::gaussian_field::GaussianF;
+use num_traits::{One, Pow, ToPrimitive};
+use crate::core::fields::cm31::CM31;
 use super::*;
 use super::fft::*;
 use super::merkle_trees::*;
@@ -26,13 +26,15 @@ struct Parameters<T> {
 #[derive(Debug)]
 struct Proof(Vec<u8>);
 
+type GaussianF = CM31;
+
 /// Generate an STIR proof that the polynomial that has the specified
 /// values at successive powers of the specified root of unity has a
 /// degree lower than maxdeg\_plus\_1
 ///
 /// We use maxdeg\+1 instead of maxdeg because it's more mathematically
 /// convenient in this case.
-fn prove_low_degree<const MOD: u64>(values: &[i128], params: &Parameters<GaussianF<MOD>>, is_fake: bool) -> Proof {
+fn prove_low_degree(values: &[i128], params: &Parameters<GaussianF>, is_fake: bool) -> Proof {
     let f = PrimeField::new(params.modulus);
     if is_fake {
         println!("Faking proof {} values are degree <= {}", values.len(), params.maxdeg_plus_1);
@@ -82,7 +84,7 @@ fn prove_low_degree<const MOD: u64>(values: &[i128], params: &Parameters<Gaussia
         // should replace lagrange_interp with an fft?
         let rt2 = rt.pow(folded_len as u32);
         let xs2s = {
-            let mut res = vec![get_power_cycle(rt2, params.modulus, GaussianF::ONE)];
+            let mut res = vec![get_power_cycle(rt2, params.modulus, GaussianF::one())];
             res.push(res[0].clone());
             (&mut res[1][1..]).reverse();
             res
@@ -162,7 +164,7 @@ fn prove_low_degree<const MOD: u64>(values: &[i128], params: &Parameters<Gaussia
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         assert_eq!((params.ood_rep + params.repetition_params[i - 1]).rem_euclid(2), 0);
 
-        let rs: Vec<GaussianF<MOD>> = r_outs.iter().cloned()
+        let rs: Vec<GaussianF> = r_outs.iter().cloned()
             .chain(t_shifts.iter().zip(t_conj.iter())
                 .map(|(&t, &k)| (p_offset * rt2.pow(t as u32)).conj(k as u64)))
             .collect_vec();
@@ -189,7 +191,7 @@ fn prove_low_degree<const MOD: u64>(values: &[i128], params: &Parameters<Gaussia
                         g_hat_shift[j] - pol_vals[j],
                         f.eval_circ_poly_at(&zpol, xs[j]),
                     ),
-                    f.geom_sum((xs[j] * r_comb).x as i128, rs.len() as u64),
+                    f.geom_sum((xs[j] * r_comb).x(), rs.len() as u64),
                 )
             })
             .collect_vec();
@@ -251,7 +253,7 @@ fn verify_low_degree_proof(proof: &Proof, params: &Parameters<Gaussian>) -> bool
 
     let mut rt = params.root_of_unity;
 
-    reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32), Gaussian::ONE);
+    reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32), Gaussian::one());
     reject_unless_eq!(f.exp(rt, params.eval_sizes[0] as u32 / 2), Gaussian::new(params.modulus as i128 - 1, 0));
 
     let mut proof_pos = 0;
@@ -470,7 +472,7 @@ fn get_pseudorandom_element_outside_coset_circle<F: KindaField>(
         let t = r + 1 + r / (cofactor as usize - 1);
 
         let val = (prim_root.pow_mod(t as u32, modulus) * shift).rem_euclid(modulus);
-        if (val * shift).rem_euclid(modulus).pow_mod(coset_size as u32, modulus) != F::ONE {
+        if (val * shift).rem_euclid(modulus).pow_mod(coset_size as u32, modulus) != F::one() {
             ans.push(val);
         }
     }
@@ -479,22 +481,23 @@ fn get_pseudorandom_element_outside_coset_circle<F: KindaField>(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::fields::m31;
     use super::super::fft::fft_inv;
     use super::*;
 
     #[test]
     fn test_circle_stir() {
-        const MODULUS: u64 = 2_u64.pow(31) - 1;
+        const MODULUS: u32 = m31::P;
         let prim_root = Gaussian::new(311014874, 1584694829);
-        let root_of_unity = prim_root.pow_mod(((MODULUS + 1) / 2_u64.pow(10 + 2)) as u32, MODULUS as u32);
+        let root_of_unity = prim_root.pow_mod((MODULUS + 1) / 2_u32.pow(10 + 2), MODULUS);
         let log_d = 10;
-        let params = generate_parameters(MODULUS as u32, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
+        let params = generate_parameters(MODULUS, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
         println!("{:?}", params);
 
         // Pure STIR tests
         let poly: Vec<i128> = (0..2_i128.pow(log_d + 1)).collect();
-        let evaluations = fft_inv(&poly, MODULUS as u32, root_of_unity, prim_root);
-        let params2: Parameters<GaussianF<MODULUS>> = Parameters {
+        let evaluations = fft_inv(&poly, MODULUS, root_of_unity, prim_root);
+        let params2: Parameters<GaussianF> = Parameters {
             root_of_unity: params.root_of_unity.into(),
             maxdeg_plus_1: params.maxdeg_plus_1,
             folding_params: params.folding_params.clone(),

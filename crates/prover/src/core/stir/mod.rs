@@ -2,7 +2,7 @@
 
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
-use num_traits::{ConstOne, Euclid, NumOps, ToPrimitive};
+use num_traits::{Euclid, NumOps, One, ToPrimitive};
 
 #[allow(dead_code)]
 
@@ -18,9 +18,9 @@ trait Xy {
     fn y(&self) -> i128;
 }
 
-trait KindaField: NumOps<Self> + PartialEq + Xy + PowMod + RemEuclid + ConstOne + Copy {}
+trait KindaField: NumOps<Self> + PartialEq + Xy + PowMod + RemEuclid + One + Copy {}
 
-impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + PowMod + RemEuclid + ConstOne + Copy {}
+impl<F> KindaField for F where F: NumOps<F> + PartialEq + Xy + PowMod + RemEuclid + One + Copy {}
 
 fn to_32_be_bytes(x: i128) -> [u8; 32] {
     let mut res = [0; 32];
