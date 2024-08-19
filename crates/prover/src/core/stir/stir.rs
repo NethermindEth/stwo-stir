@@ -484,8 +484,8 @@ mod tests {
 
     #[test]
     fn test_circle_stir() {
-        const MODULUS: u64 = 2_u64.pow(19) - 1;
-        let prim_root = Gaussian::new(308405, 185042);
+        const MODULUS: u64 = 2_u64.pow(31) - 1;
+        let prim_root = Gaussian::new(311014874, 1584694829);
         let root_of_unity = prim_root.pow_mod(((MODULUS + 1) / 2_u64.pow(10 + 2)) as u32, MODULUS as u32);
         let log_d = 10;
         let params = generate_parameters(MODULUS as u32, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
