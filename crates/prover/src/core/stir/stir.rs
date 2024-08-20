@@ -50,7 +50,6 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
     let mut rt = params.root_of_unity;
     let mut vals = values.to_vec();
     // Calculate the set of x coordinates
-    rt.pow(123);
     let mut xs = get_power_cycle(rt, params.eval_offsets[0]);
     {
         let xs_added =
@@ -472,13 +471,14 @@ fn conjugate_with_parity<F: ComplexConjugate>(f: F, parity: usize) -> F {
 
 #[cfg(test)]
 mod tests {
+    use crate::cm31;
     use crate::core::fields::FieldExpOps;
     use super::super::fft::fft_inv;
     use super::*;
 
     #[test]
     fn test_circle_stir() {
-        let prim_root = CM31::new(311014874, 1584694829);
+        let prim_root = cm31!(311014874, 1584694829);
         let root_of_unity = prim_root.pow(((MODULUS + 1) / 2_u32.pow(10 + 2)) as u128);
         let log_d = 10;
         let params = generate_parameters::<M31, CM31>(prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);

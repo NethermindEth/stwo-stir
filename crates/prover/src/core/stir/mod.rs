@@ -82,12 +82,6 @@ fn get_power_cycle<B, F: StirField<B>>(r: F, offset: F) -> Vec<F> {
     o
 }
 
-impl CM31 {
-    pub fn new(x: u64, y: u64) -> Self {
-        Self(M31(x.rem_euclid(m31::P as u64) as u32), M31(y.rem_euclid(m31::P as u64) as u32))
-    }
-}
-
 impl Xy<M31> for CM31 {
     fn x(&self) -> M31 { self.0 }
     fn y(&self) -> M31 { self.1 }
