@@ -90,7 +90,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
             res
         };
 
-        let x_polys: Vec<Vec<Vec<M31>>> =
+        let x_polys: Vec<(Vec<M31>, Vec<M31>)> =
             (0..=1).flat_map(|l| {
                 (0..folded_len).map(|k| {
                     let temp = poly_utils::circ_lagrange_interp(
@@ -102,8 +102,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
                     );
                     temp
                 }).collect_vec()
-            })
-                .collect_vec();
+            }).collect_vec();
 
         let g_hat: Vec<M31> =
             (0..=1).flat_map(|l| {
@@ -264,9 +263,9 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
                 .to_u128().unwrap(),
         );
 
-    let mut pol: Option<Vec<Vec<M31>>> = None;
+    let mut pol: Option<(Vec<M31>, Vec<M31>)> = None;
     let mut rs: Option<Vec<F>> = None;
-    let mut zpol: Option<Vec<Vec<M31>>> = None;
+    let mut zpol: Option<(Vec<M31>, Vec<M31>)> = None;
     let mut r_comb: Option<F> = None;
     let mut m_root: Option<&[u8]> = None;
 
