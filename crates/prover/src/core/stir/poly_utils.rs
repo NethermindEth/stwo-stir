@@ -1,7 +1,6 @@
 //! Translated from Nethermind STIR's poly_utils.py
 
 use num_traits::{One, Zero};
-use crate::core::fields::m31::P;
 use super::*;
 
 // can be simplified using the formula
@@ -83,7 +82,7 @@ pub fn eval_circ_poly_at<F: Xy<M31>>(p: &(Vec<M31>, Vec<M31>), pt: &F) -> M31 {
 /// Create a line polynomial between two points
 fn line<F: Xy<M31>>(pt1: &F, pt2: &F) -> (Vec<M31>, Vec<M31>) {
     let dx = pt1.x() - pt2.x();
-    let max_minus_one = M31::from_u32_unchecked(P - 1);
+    let max_minus_one = -M31::one();
     if M31::is_zero(&dx) {
         return (vec![pt1.x(), max_minus_one], vec![]);
     }

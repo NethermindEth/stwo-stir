@@ -6,7 +6,7 @@ use num_bigint::{BigInt, Sign};
 use num_traits::{ToPrimitive, Zero};
 use crate::core::fields::{ComplexConjugate};
 use super::*;
-use super::fft::*;
+use super::fft;
 use super::merkle_trees::*;
 use super::poly_utils;
 
@@ -145,7 +145,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         let rt2 = rt.pow(expand_factor as u128);
         let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u128);
 
-        let g_hat_shift = shift_domain(
+        let g_hat_shift = fft::shift_domain(
             &g_hat,
             rt,
             p_offset,
@@ -168,7 +168,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
         let betas: Vec<M31> = r_outs
             .iter()
-            .map(|&r| inv_fft_at_point(&g_hat, rt2, p_offset, r))
+            .map(|&r| fft::inv_fft_at_point(&g_hat, rt2, p_offset, r))
             .collect_vec();
         proof.legacy_proof.extend(betas.iter().flat_map(|b| to_32_be_bytes(b.0 as u128)));
 
@@ -220,7 +220,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
     let folded_len = last_folded_len.unwrap();
     let last_folding_param = params.folding_params.last().cloned().unwrap();
     let last_eval_offset = params.eval_offsets.last().cloned().unwrap();
-    let g_pol = fft(&g_hat,
+    let g_pol = fft::fft(&g_hat,
                     rt.pow(last_folding_param as u128),
                     last_eval_offset.pow(last_folding_param as u128));
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
@@ -433,9 +433,9 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &StirProof, params: &Parame
         }
 
         reject_unless_eq!(poly_utils::eval_circ_poly_at(&poly_utils::circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.complex_conjugate())),
-                          fft_inv(&g_pol, F::one(),
-                                  conjugate_with_parity(rt2.pow(t_shifts[k] as u128) * last_eval_offset.pow(last_folding_param as u128),
-                                                        t_conj[k]))[0]);
+                          fft::fft_inv(&g_pol, F::one(),
+                                       conjugate_with_parity(rt2.pow(t_shifts[k] as u128) * last_eval_offset.pow(last_folding_param as u128),
+                                                             t_conj[k]))[0]);
     }
 
     println!("STIR proof verified");
@@ -529,7 +529,7 @@ mod tests {
         let mut eval_offsets = vec![init_offset];
         let mut rt = root_of_unity;
 
-        for _ in 1..=m {
+        for _ in 0..m {
             eval_sizes.push(eval_sizes.last().unwrap() / 2);
             eval_offsets.push(rt * init_offset);
             rt = rt.square();
