@@ -15,14 +15,14 @@ mod fft;
 mod merkle_trees;
 mod poly_utils;
 
-trait Xy {
-    fn x(&self) -> i128;
-    fn y(&self) -> i128;
+trait Xy<F> {
+    fn x(&self) -> F;
+    fn y(&self) -> F;
 }
 
-trait StirField: Field + Xy + Mul<u32, Output = Self> {}
+trait StirField<B>: Field + Xy<B> + Mul<u32, Output = Self> {}
 
-impl<F> StirField for F where F: Field + Xy + Mul<u32, Output = F> {}
+impl<B, F> StirField<B> for F where F: Field + Xy<B> + Mul<u32, Output = F> {}
 
 fn to_32_be_bytes(x: i128) -> [u8; 32] {
     let mut res = [0; 32];
@@ -69,7 +69,7 @@ fn get_pseudorandom_indices(
     ans
 }
 
-fn get_power_cycle<F: StirField>(r: F, offset: F) -> Vec<F> {
+fn get_power_cycle<B, F: StirField<B>>(r: F, offset: F) -> Vec<F> {
     let mut o = vec![offset];
     loop {
         let next = o[o.len() - 1] * r;
@@ -96,7 +96,7 @@ impl Mul<u32> for CM31 {
     }
 }
 
-impl Xy for CM31 {
-    fn x(&self) -> i128 { self.0.0 as i128 }
-    fn y(&self) -> i128 { self.1.0 as i128 }
+impl Xy<M31> for CM31 {
+    fn x(&self) -> M31 { self.0 }
+    fn y(&self) -> M31 { self.1 }
 }

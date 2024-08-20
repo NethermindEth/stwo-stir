@@ -1,180 +1,142 @@
 //! Translated from Nethermind STIR's poly_utils.py
 
+use num_traits::{One, Zero};
+use crate::core::fields::m31::P;
 use super::*;
 
-/// An object that includes convenience operations for numbers
-/// and polynomials in some prime field
-pub struct PrimeField {
-    modulus: u32,
+// can be simplified using the formula
+pub fn geom_sum(x: M31, p: u64) -> M31 {
+    let mut ans = M31::one();
+    let mut prod = M31::one();
+    for _ in 0..p {
+        prod = prod * x;
+        ans += prod;
+    }
+    ans
 }
 
-impl PrimeField {
-    pub fn new(modulus: u32) -> Self {
-        Self { modulus }
+/// Evaluate a polynomial at a point
+pub fn eval_poly_at(p: &[M31], x: M31) -> M31 {
+    let mut y = M31::zero();
+    let mut power_of_x = M31::one();
+    for &p_coeff in p {
+        y = y + power_of_x * p_coeff;
+        power_of_x *= x;
     }
+    y
+}
 
-    pub fn add(&self, x: i128, y: i128) -> i128 {
-        (x + y).rem_euclid(self.modulus as i128)
-    }
+/// Arithmetic for polynomials
+fn add_polys(a: &[M31], b: &[M31]) -> Vec<M31> {
+    (0..std::cmp::max(a.len(), b.len()))
+        .map(|i| {
+            (if i < a.len() { a[i] } else { M31::zero() }) + (if i < b.len() { b[i] } else { M31::zero() })
+        })
+        .collect()
+}
 
-    pub fn sub(&self, x: i128, y: i128) -> i128 {
-        (x - y).rem_euclid(self.modulus as i128)
-    }
+fn sub_polys(a: &[M31], b: &[M31]) -> Vec<M31> {
+    (0..std::cmp::max(a.len(), b.len()))
+        .map(|i| {
+            (if i < a.len() { a[i] } else { M31::zero() }) - (if i < b.len() { b[i] } else { M31::zero() })
+        })
+        .collect()
+}
 
-    // can be simplified using the formula
-    pub fn geom_sum(&self, x: i128, p: u64) -> i128 {
-        let mut ans = 1;
-        let mut prod = 1;
-        for _ in 0..p {
-            prod = prod * x;
-            ans = self.add(ans, prod);
+fn mul_polys(a: &[M31], b: &[M31]) -> Vec<M31> {
+    let mut o = vec![M31::zero(); a.len() + b.len() - 1];
+    for (i, &aval) in a.iter().enumerate() {
+        for (j, &bval) in b.iter().enumerate() {
+            o[i + j] += aval * bval;
         }
-        ans
     }
+    o
+}
 
-    /// Modular inverse using the extended Euclidean algorithm
-    pub fn inv(&self, a: i128) -> i128 {
-        let modulus = self.modulus as i128;
-        let (mut lm, mut hm) = (1, 0);
-        let (mut low, mut high) = (a.rem_euclid(modulus), modulus);
-        if low == 0 {
-            panic!("ZeroDivisionError");
-        }
-        while low > 1 {
-            let r = high / low;
-            let (nm, new) = (hm - lm * r, high - low * r);
-            (lm, low, hm, high) = (nm, new, lm, low);
-        }
-        lm.rem_euclid(modulus)
+// Arithmetic for circular polynomials
+
+fn add_circ_polys(a: &[Vec<M31>], b: &[Vec<M31>]) -> Vec<Vec<M31>> {
+    vec![add_polys(&a[0], &b[0]), add_polys(&a[1], &b[1])]
+}
+
+fn sub_circ_polys(a: &[Vec<M31>], b: &[Vec<M31>]) -> Vec<Vec<M31>> {
+    vec![sub_polys(&a[0], &b[0]), sub_polys(&a[1], &b[1])]
+}
+
+/// Multiply two circular polynomials
+fn mul_circ_polys(a: &[Vec<M31>], b: &[Vec<M31>]) -> Vec<Vec<M31>> {
+    let a1b1 = mul_polys(&a[1], &b[1]);
+    vec![
+        sub_polys(
+            &add_polys(&mul_polys(&a[0], &b[0]), &a1b1),
+            &[M31::zero(), M31::zero()].iter().chain(a1b1.iter()).cloned().collect::<Vec<_>>(),
+        ),
+        add_polys(&mul_polys(&a[0], &b[1]), &mul_polys(&a[1], &b[0])),
+    ]
+}
+
+/// Evaluate a circular polynomial at a point
+pub fn eval_circ_poly_at<F: Xy<M31>>(p: &[Vec<M31>], pt: &F) -> M31 {
+    eval_poly_at(&p[0], pt.x()) + eval_poly_at(&p[1], pt.x()) * pt.y()
+}
+
+/// Create a line polynomial between two points
+fn line<F: Xy<M31>>(pt1: &F, pt2: &F) -> Vec<Vec<M31>> {
+    let dx = pt1.x() - pt2.x();
+    let max_minus_one = M31::from_u32_unchecked(P - 1);
+    if M31::is_zero(&dx) {
+        return vec![vec![pt1.x(), max_minus_one], vec![]];
     }
+    let slope = (pt1.y() - pt2.y()) / dx;
+    vec![
+        vec![pt1.y() - slope * pt1.x(), slope],
+        vec![max_minus_one],
+    ]
+}
 
-    pub fn div(&self, x: i128, y: i128) -> i128 {
-        (x * self.inv(y)).rem_euclid(self.modulus as i128)
+/// Build a circular polynomial that returns 0 at all specified points
+pub fn circ_zpoly<F: Xy<M31>>(pts: &[F], nzero: Option<&F> /* default = None */) -> Vec<Vec<M31>> {
+    let mut ans = vec![vec![M31::one()], vec![]];
+    for i in 0..pts.len() / 2 {
+        ans = mul_circ_polys(&ans, &line(&pts[2 * i], &pts[2 * i + 1]));
     }
-
-    /// Evaluate a polynomial at a point
-    pub fn eval_poly_at(&self, p: &[i128], x: i128) -> i128 {
-        let mut y = 0;
-        let mut power_of_x = 1;
-        for &p_coeff in p {
-            y = y + power_of_x * p_coeff;
-            power_of_x = (power_of_x * x).rem_euclid(self.modulus as i128);
-        }
-        y.rem_euclid(self.modulus as i128)
-    }
-
-    /// Arithmetic for polynomials
-    fn add_polys(&self, a: &[i128], b: &[i128]) -> Vec<i128> {
-        (0..std::cmp::max(a.len(), b.len()))
-            .map(|i| {
-                ((if i < a.len() { a[i] } else { 0 }) + (if i < b.len() { b[i] } else { 0 }))
-                    .rem_euclid(self.modulus as i128)
-            })
-            .collect()
-    }
-
-    fn sub_polys(&self, a: &[i128], b: &[i128]) -> Vec<i128> {
-        (0..std::cmp::max(a.len(), b.len()))
-            .map(|i| {
-                ((if i < a.len() { a[i] } else { 0 }) - (if i < b.len() { b[i] } else { 0 }))
-                    .rem_euclid(self.modulus as i128)
-            })
-            .collect()
-    }
-
-    fn mul_polys(&self, a: &[i128], b: &[i128]) -> Vec<i128> {
-        let mut o = vec![0; a.len() + b.len() - 1];
-        for (i, &aval) in a.iter().enumerate() {
-            for (j, &bval) in b.iter().enumerate() {
-                o[i + j] += aval * bval;
+    let max_minus_one = -M31::one();
+    if pts.len() % 2 == 1 {
+        match nzero {
+            Some(nzero) if nzero.x() == pts[pts.len() - 1].x() => {
+                ans = mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].y()], vec![max_minus_one]]);
+            }
+            _ => {
+                ans = mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].x(), max_minus_one], vec![]]);
             }
         }
-        o.iter().map(|&x| x.rem_euclid(self.modulus as i128)).collect()
     }
+    ans
+}
 
-    // Arithmetic for circular polynomials
+/// Circular Lagrange interpolation
+pub fn circ_lagrange_interp<F: Xy<M31> + Copy>(pts: &[F], vals: &[M31], normalize: bool /* default = false */) -> Vec<Vec<M31>> {
+    let mul_by_const = |a: &[M31], c: M31| -> Vec<M31> {
+        a.iter().map(|&x| x * c).collect()
+    };
+    let mul_circ_by_const = |a: &[Vec<M31>], c: M31| -> Vec<Vec<M31>> {
+        vec![mul_by_const(&a[0], c),
+             mul_by_const(&a[1], c)]
+    };
 
-    fn add_circ_polys(&self, a: &[Vec<i128>], b: &[Vec<i128>]) -> Vec<Vec<i128>> {
-        vec![self.add_polys(&a[0], &b[0]), self.add_polys(&a[1], &b[1])]
+    assert_eq!(pts.len(), vals.len());
+    let mut ans = vec![vec![], vec![]];
+    for i in 0..pts.len() {
+        let pol = circ_zpoly(&[&pts[..i], &pts[i + 1..]].concat(), Some(&pts[i]));
+        let scale = vals[i] / eval_circ_poly_at(&pol, &pts[i]);
+        ans = add_circ_polys(&ans, &mul_circ_by_const(&pol, scale));
     }
-
-    fn sub_circ_polys(&self, a: &[Vec<i128>], b: &[Vec<i128>]) -> Vec<Vec<i128>> {
-        vec![self.sub_polys(&a[0], &b[0]), self.sub_polys(&a[1], &b[1])]
+    if normalize && pts.len() % 2 == 0 {
+        let d = pts.len() / 2;
+        let zpol = circ_zpoly(pts, None);
+        let coef_a = if ans[1].len() >= d { ans[1][d - 1] } else { M31::zero() };
+        let scale = coef_a / zpol[1][d - 1];
+        ans = sub_circ_polys(&ans, &mul_circ_by_const(&zpol, scale));
     }
-
-    /// Multiply two circular polynomials
-    fn mul_circ_polys(&self, a: &[Vec<i128>], b: &[Vec<i128>]) -> Vec<Vec<i128>> {
-        let a1b1 = self.mul_polys(&a[1], &b[1]);
-        vec![
-            self.sub_polys(
-                &self.add_polys(&self.mul_polys(&a[0], &b[0]), &a1b1),
-                &[0, 0].iter().chain(a1b1.iter()).cloned().collect::<Vec<_>>(),
-            ),
-            self.add_polys(&self.mul_polys(&a[0], &b[1]), &self.mul_polys(&a[1], &b[0])),
-        ]
-    }
-
-    /// Evaluate a circular polynomial at a point
-    pub fn eval_circ_poly_at<F: Xy>(&self, p: &[Vec<i128>], pt: &F) -> i128 {
-        self.add(self.eval_poly_at(&p[0], pt.x()), self.eval_poly_at(&p[1], pt.x()) * pt.y())
-    }
-
-    /// Create a line polynomial between two points
-    fn line<F: Xy>(&self, pt1: &F, pt2: &F) -> Vec<Vec<i128>> {
-        let dx = self.sub(pt1.x(), pt2.x());
-        if dx == 0 {
-            return vec![vec![pt1.x(), self.modulus as i128 - 1], vec![]];
-        }
-        let slope = self.div(pt1.y() - pt2.y(), dx);
-        vec![
-            vec![(pt1.y() - slope * pt1.x()).rem_euclid(self.modulus as i128), slope],
-            vec![self.modulus as i128 - 1],
-        ]
-    }
-
-    /// Build a circular polynomial that returns 0 at all specified points
-    pub fn circ_zpoly<F: Xy>(&self, pts: &[F], nzero: Option<&F> /* default = None */) -> Vec<Vec<i128>> {
-        let mut ans = vec![vec![1], vec![]];
-        for i in 0..pts.len() / 2 {
-            ans = self.mul_circ_polys(&ans, &self.line(&pts[2 * i], &pts[2 * i + 1]));
-        }
-        if pts.len() % 2 == 1 {
-            match nzero {
-                Some(nzero) if nzero.x() == pts[pts.len() - 1].x() => {
-                    ans = self.mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].y()], vec![self.modulus as i128 - 1]]);
-                }
-                _ => {
-                    ans = self.mul_circ_polys(&ans, &vec![vec![pts[pts.len() - 1].x(), self.modulus as i128 - 1], vec![]]);
-                }
-            }
-        }
-        ans
-    }
-
-    /// Circular Lagrange interpolation
-    pub fn circ_lagrange_interp<F: Xy + Copy>(&self, pts: &[F], vals: &[i128], normalize: bool /* default = false */) -> Vec<Vec<i128>> {
-        let mul_by_const = |a: &[i128], c: i128| -> Vec<i128> {
-            a.iter().map(|&x| (x * c).rem_euclid(self.modulus as i128)).collect()
-        };
-        let mul_circ_by_const = |a: &[Vec<i128>], c: i128| -> Vec<Vec<i128>> {
-            vec![mul_by_const(&a[0], c),
-                 mul_by_const(&a[1], c)]
-        };
-
-        assert_eq!(pts.len(), vals.len());
-        let mut ans = vec![vec![], vec![]];
-        for i in 0..pts.len() {
-            let pol = self.circ_zpoly(&[&pts[..i], &pts[i + 1..]].concat(), Some(&pts[i]));
-            let scale = self.div(vals[i], self.eval_circ_poly_at(&pol, &pts[i]));
-            ans = self.add_circ_polys(&ans, &mul_circ_by_const(&pol, scale));
-        }
-        if normalize && pts.len() % 2 == 0 {
-            let d = pts.len() / 2;
-            let zpol = self.circ_zpoly(pts, None);
-            let coef_a = if ans[1].len() >= d { ans[1][d - 1] } else { 0 };
-            let scale = self.div(coef_a, zpol[1][d - 1]);
-            ans = self.sub_circ_polys(&ans, &mul_circ_by_const(&zpol, scale));
-        }
-        ans
-    }
+    ans
 }

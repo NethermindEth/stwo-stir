@@ -1,76 +1,75 @@
 //! Translated from Nethermind STIR's circle_fft.py
 
-use crate::core::stir::poly_utils::PrimeField;
+use num_traits::One;
+use crate::core::fields::FieldExpOps;
+use crate::core::fields::m31::M31;
 use super::*;
 
 /// Uses twin coset
-pub fn fft_inv<F: StirField>(coefs: &[i128], modulus: u32, root_of_unity: F, offset: F) -> Vec<i128> {
+pub fn fft_inv<F: StirField<M31>>(coefs: &[M31], modulus: u32, root_of_unity: F, offset: F) -> Vec<M31> {
     let rootz = get_power_cycle(root_of_unity, offset);
-    let xs: Vec<i128> = rootz.iter().map(|r| r.x()).collect();
+    let xs: Vec<M31> = rootz.iter().map(|r| r.x()).collect();
     let even = x_fft_inv(&coefs.iter().step_by(2).cloned().collect::<Vec<_>>(), modulus, &xs);
     let odd = x_fft_inv(&coefs.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(), modulus, &xs);
-    let first_cycle: Vec<i128> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| (a + b * r.y()).rem_euclid(modulus as i128)).collect();
-    let second_cycle: Vec<i128> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| (a - b * r.y()).rem_euclid(modulus as i128)).collect();
+    let first_cycle: Vec<M31> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| a + b * r.y()).collect();
+    let second_cycle: Vec<M31> = even.iter().zip(&odd).zip(&rootz).map(|((&a, &b), r)| a - b * r.y()).collect();
     [first_cycle, second_cycle].concat()
 }
 
-fn interleave(l1: &[i128], l2: &[i128]) -> Vec<i128> {
+fn interleave(l1: &[M31], l2: &[M31]) -> Vec<M31> {
     l1.iter().zip(l2.iter()).flat_map(|(&a, &b)| vec![a, b]).collect()
 }
 
-fn x_fft(vals: &[i128], modulus: u32, xs: &[i128]) -> Vec<i128> {
+fn x_fft(vals: &[M31], modulus: u32, xs: &[M31]) -> Vec<M31> {
     assert_eq!(vals.len(), xs.len());
     if vals.len() == 1 {
         return vals.to_vec();
     }
-    let f = PrimeField::new(modulus);
-    let modulus = modulus as i128;
     let new_len = vals.len() / 2;
-    let half = (modulus + 1) / 2;
+    let half = M31::from_u32_unchecked((modulus + 1) / 2);
     let first_half = &vals[..new_len];
     let second_half = &vals[new_len..];
     let even: Vec<_> = first_half.iter().zip(second_half).map(|(&a, &b)| {
-        ((a + b) * half).rem_euclid(modulus)
+        (a + b) * half
     }).collect();
     let odd: Vec<_> = first_half.iter().zip(second_half).zip(xs).map(|((&a, &b), &x)| {
-        ((a - b) * half * f.inv(x)).rem_euclid(modulus)
+        (a - b) * half * x.inverse()
     }).collect();
-    let new_xs: Vec<_> = xs[..new_len].iter().map(|x| (2 * x * x - 1).rem_euclid(modulus)).collect();
-    interleave(&x_fft(&even, modulus as u32, &new_xs),
-               &x_fft(&odd, modulus as u32, &new_xs))
+    let new_xs: Vec<_> = xs[..new_len].iter().map(|x| x.square().double() - M31::one()).collect();
+    interleave(&x_fft(&even, modulus, &new_xs),
+               &x_fft(&odd, modulus, &new_xs))
 }
 
-fn x_fft_inv(coefs: &[i128], modulus: u32, xs: &[i128]) -> Vec<i128> {
+fn x_fft_inv(coefs: &[M31], modulus: u32, xs: &[M31]) -> Vec<M31> {
     if coefs.len() == 1 {
         return vec![coefs[0]; xs.len()];
     }
     let modulus = modulus as i128;
     let new_xs_len = if xs.len() == 1 { 1 } else { xs.len() / 2 };
-    let new_xs: Vec<_> = xs[..new_xs_len].iter().map(|x| (2 * x * x - 1).rem_euclid(modulus)).collect();
+    let new_xs: Vec<_> = xs[..new_xs_len].iter().map(|x| (x.square().double() - M31::one())).collect();
     let even = x_fft_inv(&coefs.iter().step_by(2).cloned().collect::<Vec<_>>(), modulus as u32, &new_xs);
     let odd = x_fft_inv(&coefs.iter().skip(1).step_by(2).cloned().collect::<Vec<_>>(), modulus as u32, &new_xs);
     let even_twice = [even.clone(), even].concat();
     let odd_twice = [odd.clone(), odd].concat();
     even_twice.iter().zip(&odd_twice).zip(xs).map(|((&a, &b), &x)| {
-        (a + b * x).rem_euclid(modulus)
+        a + b * x
     }).collect()
 }
 
 /// Uses twin coset
-pub fn fft<F: StirField>(vals: &[i128], modulus: u32, root_of_unity: F, offset: F) -> Vec<i128> {
-    let f = PrimeField::new(modulus);
+pub fn fft<F: StirField<M31>>(vals: &[M31], modulus: u32, root_of_unity: F, offset: F) -> Vec<M31> {
     let rootz = get_power_cycle(root_of_unity, offset);
-    let xs: Vec<i128> = rootz.iter().map(|r| r.x()).collect();
-    let half = (modulus as i128 + 1) / 2;
+    let xs: Vec<M31> = rootz.iter().map(|r| r.x()).collect();
+    let half = M31::from_u32_unchecked((modulus + 1) / 2);
     let new_len = vals.len() / 2;
     assert_eq!(new_len, rootz.len());
     let first_half = &vals[..new_len];
     let second_half = &vals[new_len..];
-    let even: Vec<i128> = first_half.iter().zip(second_half).map(|(&a, &b)| {
-        ((a + b) * half).rem_euclid(modulus as i128)
+    let even: Vec<M31> = first_half.iter().zip(second_half).map(|(&a, &b)| {
+        (a + b) * half
     }).collect();
-    let odd: Vec<i128> = first_half.iter().zip(second_half).zip(&rootz).map(|((&a, &b), r)| {
-        ((a - b) * half * f.inv(r.y())).rem_euclid(modulus as i128)
+    let odd: Vec<M31> = first_half.iter().zip(second_half).zip(&rootz).map(|((&a, &b), r)| {
+        (a - b) * half * r.y().inverse()
     }).collect();
     interleave(&x_fft(&even, modulus, &xs), &x_fft(&odd, modulus, &xs))
 }
@@ -105,18 +104,18 @@ fn _simple_ft(vals: &[i128], modulus: u32, roots_of_unity: &[i128]) -> Vec<i128>
     o
 }
 
-pub fn shift_domain<F: StirField>(
-    vals: &[i128],
+pub fn shift_domain<F: StirField<M31>>(
+    vals: &[M31],
     modulus: u32,
     root_of_unity: F,
     offset: F,
     factor: F,
     expand: u32, /* default = 1*/
-) -> Vec<i128> {
+) -> Vec<M31> {
     fft_inv(&fft(vals, modulus, root_of_unity.pow(expand as u128), offset), modulus, root_of_unity, factor)
 }
 
 /// Evaluates f(x) for f in evaluation form
-pub fn inv_fft_at_point<F: StirField>(vals: &[i128], modulus: u32, root_of_unity: F, offset: F, x: F) -> i128 {
+pub fn inv_fft_at_point<F: StirField<M31>>(vals: &[M31], modulus: u32, root_of_unity: F, offset: F, x: F) -> M31 {
     fft_inv(&fft(vals, modulus, root_of_unity, offset), modulus, F::one(), x)[0]
 }
