@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -8,19 +9,18 @@ use super::super::channel::Blake2sChannel;
 use super::super::circle::CirclePoint;
 use super::super::fields::m31::BaseField;
 use super::super::fields::qm31::SecureField;
-use super::super::fri::{FriConfig, FriProof, FriProver};
 use super::super::poly::circle::CanonicCoset;
 use super::super::poly::BitReversedOrder;
 use super::super::proof_of_work::{ProofOfWork, ProofOfWorkProof};
-use super::super::prover::{
-    LOG_BLOWUP_FACTOR, LOG_LAST_LAYER_DEGREE_BOUND, N_QUERIES, PROOF_OF_WORK_BITS,
-};
+use super::super::prover::PROOF_OF_WORK_BITS;
 use super::super::ColumnVec;
 use super::quotients::{compute_fri_quotients, PointSample};
 use super::utils::TreeVec;
-use super::TreeColumnSpan;
+use super::{FriCommitmentScheme, PolynomialCommitmentSchemeBase, TreeColumnSpan};
+use super::{PolynomialProver};
 use crate::core::backend::Backend;
 use crate::core::channel::Channel;
+use crate::core::fri::{FriOps, FriProof, FriProver};
 use crate::core::poly::circle::{CircleEvaluation, CirclePoly};
 use crate::core::poly::twiddles::TwiddleTree;
 use crate::core::vcs::blake2_hash::Blake2sHash;
@@ -31,19 +31,29 @@ use crate::core::vcs::prover::{MerkleDecommitment, MerkleProver};
 type MerkleHasher = Blake2sMerkleHasher;
 type ProofChannel = Blake2sChannel;
 
-/// The prover side of a FRI polynomial commitment scheme. See [super].
-pub struct CommitmentSchemeProver<'a, B: Backend + MerkleOps<MerkleHasher>> {
+/// The prover side of a PCS polynomial commitment scheme. See [super].
+pub struct CommitmentSchemeProver<'a, B, Proof>
+where
+    B: Backend + MerkleOps<MerkleHasher>,
+    Self: PolynomialProver<ProofChannel, Proof>
+{
     pub trees: TreeVec<CommitmentTreeProver<B>>,
     pub log_blowup_factor: u32,
     twiddles: &'a TwiddleTree<B>,
+    _phantom_proof: PhantomData<Proof>,
 }
 
-impl<'a, B: Backend + MerkleOps<MerkleHasher>> CommitmentSchemeProver<'a, B> {
+impl<'a, B, Proof> CommitmentSchemeProver<'a, B, Proof>
+where
+    B: Backend + MerkleOps<MerkleHasher>,
+    Self: PolynomialProver<ProofChannel, Proof>
+{
     pub fn new(log_blowup_factor: u32, twiddles: &'a TwiddleTree<B>) -> Self {
         CommitmentSchemeProver {
             trees: TreeVec::default(),
             log_blowup_factor,
             twiddles,
+            _phantom_proof: PhantomData,
         }
     }
 
@@ -54,7 +64,7 @@ impl<'a, B: Backend + MerkleOps<MerkleHasher>> CommitmentSchemeProver<'a, B> {
         self.trees.push(tree);
     }
 
-    pub fn tree_builder(&mut self) -> TreeBuilder<'_, 'a, B> {
+    pub fn tree_builder(&mut self) -> TreeBuilder<'_, 'a, B, Proof> {
         TreeBuilder {
             tree_index: self.trees.len(),
             commitment_scheme: self,
@@ -77,12 +87,19 @@ impl<'a, B: Backend + MerkleOps<MerkleHasher>> CommitmentSchemeProver<'a, B> {
             .as_ref()
             .map(|tree| tree.evaluations.iter().collect())
     }
+}
 
-    pub fn prove_values(
+// TODO(alex): Move to a submodule
+impl<'a, B> PolynomialProver<Blake2sChannel, FriProof<MerkleHasher>>
+for CommitmentSchemeProver<'a, B, FriProof<MerkleHasher>>
+where
+    B: Backend + FriOps + MerkleOps<MerkleHasher>,
+{
+    fn prove_values(
         &self,
         sampled_points: TreeVec<ColumnVec<Vec<CirclePoint<SecureField>>>>,
         channel: &mut ProofChannel,
-    ) -> CommitmentSchemeProof {
+    ) -> CommitmentSchemeProof<FriProof<MerkleHasher>> {
         // Evaluate polynomials on open points.
         let span = span!(Level::INFO, "Evaluate columns out of domain").entered();
         let samples = self
@@ -108,9 +125,9 @@ impl<'a, B: Backend + MerkleOps<MerkleHasher>> CommitmentSchemeProver<'a, B> {
         let quotients = compute_fri_quotients(&columns, &samples.flatten(), channel.draw_felt());
 
         // Run FRI commitment phase on the oods quotients.
-        let fri_config = FriConfig::new(LOG_LAST_LAYER_DEGREE_BOUND, LOG_BLOWUP_FACTOR, N_QUERIES);
+        let fri_config = FriCommitmentScheme::config();
         let fri_prover =
-            FriProver::<B, MerkleHasher>::commit(channel, fri_config, &quotients, self.twiddles);
+            FriProver::commit(channel, fri_config, &quotients, self.twiddles);
 
         // Proof of work.
         let proof_of_work = ProofOfWork::new(PROOF_OF_WORK_BITS).prove(channel);
@@ -135,26 +152,35 @@ impl<'a, B: Backend + MerkleOps<MerkleHasher>> CommitmentSchemeProver<'a, B> {
             decommitments,
             queried_values,
             proof_of_work,
-            fri_proof,
+            pcs_proof: fri_proof,
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CommitmentSchemeProof {
+pub struct CommitmentSchemeProof<P> {
     pub sampled_values: TreeVec<ColumnVec<Vec<SecureField>>>,
     pub decommitments: TreeVec<MerkleDecommitment<MerkleHasher>>,
     pub queried_values: TreeVec<ColumnVec<Vec<BaseField>>>,
     pub proof_of_work: ProofOfWorkProof,
-    pub fri_proof: FriProof<MerkleHasher>,
+    pub pcs_proof: P,
 }
 
-pub struct TreeBuilder<'a, 'b, B: Backend + MerkleOps<MerkleHasher>> {
+pub struct TreeBuilder<'a, 'b, B, Proof>
+where
+    B: Backend + MerkleOps<MerkleHasher>,
+    CommitmentSchemeProver<'b, B, Proof>: PolynomialProver<ProofChannel, Proof>,
+{
     tree_index: usize,
-    commitment_scheme: &'a mut CommitmentSchemeProver<'b, B>,
+    commitment_scheme: &'a mut CommitmentSchemeProver<'b, B, Proof>,
     polys: ColumnVec<CirclePoly<B>>,
 }
-impl<'a, 'b, B: Backend + MerkleOps<MerkleHasher>> TreeBuilder<'a, 'b, B> {
+
+impl<'a, 'b, B, Proof> TreeBuilder<'a, 'b, B, Proof>
+where
+    B: Backend + MerkleOps<MerkleHasher>,
+    CommitmentSchemeProver<'b, B, Proof>: PolynomialProver<ProofChannel, Proof>,
+{
     pub fn extend_evals(
         &mut self,
         columns: ColumnVec<CircleEvaluation<B, BaseField, BitReversedOrder>>,
