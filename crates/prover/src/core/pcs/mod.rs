@@ -20,7 +20,7 @@ use crate::core::fri::{FriConfig, FriOps, FriProof};
 use crate::core::poly::circle::PolyOps;
 use crate::core::prover::{VerificationError, LOG_BLOWUP_FACTOR, LOG_LAST_LAYER_DEGREE_BOUND, N_QUERIES};
 use crate::core::vcs::blake2_merkle::Blake2sMerkleHasher;
-use crate::core::vcs::ops::{MerkleHasher, MerkleOps};
+use crate::core::vcs::ops::MerkleOps;
 pub use self::prover::{CommitmentSchemeProof, CommitmentSchemeProver, CommitmentTreeProver};
 pub use self::utils::TreeVec;
 pub use self::verifier::CommitmentSchemeVerifier;
@@ -40,7 +40,7 @@ pub trait PolynomialCommitmentSchemeBase {
     fn config() -> Self::Config;
 }
 
-pub trait PolynomialCommitmentScheme<B: PolyOps, H: MerkleHasher>: PolynomialCommitmentSchemeBase {
+pub trait PolynomialCommitmentScheme<B: PolyOps>: PolynomialCommitmentSchemeBase {
     type Prover<'a>: PolynomialProver<Self::Channel, Self::Proof> where B: 'a;
     type Verifier: PolynomialVerifier<Self::Channel, Self::Proof>;
 }
@@ -75,7 +75,7 @@ impl PolynomialCommitmentSchemeBase for FriCommitmentScheme {
     }
 }
 
-impl<B> PolynomialCommitmentScheme<B, Blake2sMerkleHasher> for FriCommitmentScheme
+impl<B> PolynomialCommitmentScheme<B> for FriCommitmentScheme
 where
     B: Backend + FriOps + MerkleOps<Blake2sMerkleHasher>,
 {

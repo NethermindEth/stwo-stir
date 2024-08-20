@@ -14,19 +14,16 @@ use crate::core::poly::circle::{CanonicCoset, CircleEvaluation};
 use crate::core::poly::BitReversedOrder;
 use crate::core::prover::{ProvingError, StarkProof, VerificationError};
 use crate::core::vcs::blake2_hash::Blake2sHasher;
-use crate::core::vcs::blake2_merkle::Blake2sMerkleHasher;
 use crate::core::vcs::hasher::Hasher;
 use crate::trace_generation::{commit_and_prove, commit_and_verify};
 
 pub mod air;
 mod component;
 
-type MerkleHasher = Blake2sMerkleHasher;
-
 #[derive(Clone)]
 pub struct Fibonacci<Pcs>
 where
-    Pcs: PolynomialCommitmentScheme<CpuBackend, MerkleHasher>,
+    Pcs: PolynomialCommitmentScheme<CpuBackend>,
 {
     pub air: FibonacciAir,
     _phantom_pcs: PhantomData<Pcs>,
@@ -34,7 +31,7 @@ where
 
 impl<Pcs> Fibonacci<Pcs>
 where
-    Pcs: PolynomialCommitmentScheme<CpuBackend, MerkleHasher, Channel = Blake2sChannel>,
+    Pcs: PolynomialCommitmentScheme<CpuBackend, Channel = Blake2sChannel>,
     for<'a> CommitmentSchemeProver<'a, CpuBackend, Pcs::Proof>: PolynomialProver<Pcs::Channel, Pcs::Proof>,
     CommitmentSchemeVerifier<Pcs::Proof>: PolynomialVerifier<Pcs::Channel, Pcs::Proof>,
 {
@@ -85,7 +82,7 @@ where
 
 pub struct MultiFibonacci<Pcs>
 where
-    Pcs: PolynomialCommitmentScheme<CpuBackend, MerkleHasher>,
+    Pcs: PolynomialCommitmentScheme<CpuBackend>,
 {
     pub air: MultiFibonacciAir,
     log_sizes: Vec<u32>,
@@ -95,7 +92,7 @@ where
 
 impl<Pcs> MultiFibonacci<Pcs>
 where
-    Pcs: PolynomialCommitmentScheme<CpuBackend, MerkleHasher, Channel = Blake2sChannel>,
+    Pcs: PolynomialCommitmentScheme<CpuBackend, Channel = Blake2sChannel>,
     for<'a> CommitmentSchemeProver<'a, CpuBackend, Pcs::Proof>: PolynomialProver<Pcs::Channel, Pcs::Proof>,
     CommitmentSchemeVerifier<Pcs::Proof>: PolynomialVerifier<Pcs::Channel, Pcs::Proof>,
 {
