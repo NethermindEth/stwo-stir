@@ -25,14 +25,16 @@ trait StirField<B>: Field + Xy<B> {}
 
 impl<B, F> StirField<B> for F where F: Field + Xy<B> {}
 
-fn to_32_be_bytes(x: i128) -> [u8; 32] {
+type Hash = [u8; 32];
+
+fn to_32_be_bytes(x: u128) -> [u8; 32] {
     let mut res = [0; 32];
     res[16..].copy_from_slice(&x.to_be_bytes());
     res
 }
 
-fn blake(x: &[u8]) -> Vec<u8> {
-    Blake2s256::digest(x).to_vec()
+fn blake(x: &[u8]) -> Hash {
+    Blake2s256::digest(x).into()
 }
 
 /// Extract pseudorandom indices from entropy
@@ -49,7 +51,7 @@ fn get_pseudorandom_indices(
         let exclude2: Vec<usize> = exclude.iter().enumerate().map(|(i, &x)| x - i).collect();
         let val = BigInt::from_bytes_be(
             Sign::Plus,
-            &blake(&[&to_32_be_bytes(c as i128), seed].concat()),
+            &blake(&[&to_32_be_bytes(c as u128), seed].concat()),
         ).rem_euclid(
             &BigInt::from(modulus - exclude.len() as u32)
         ).to_usize().unwrap();

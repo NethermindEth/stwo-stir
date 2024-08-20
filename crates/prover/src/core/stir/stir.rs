@@ -23,7 +23,23 @@ struct Parameters<T> {
 }
 
 #[derive(Debug)]
-struct Proof(Vec<u8>);
+struct StirProofLayer {
+    merkle_root: Hash,
+    betas: Vec<M31>,
+    oracle_branches: Vec<Vec<Hash>>,
+}
+
+#[derive(Debug)]
+struct StirProof {
+    merkle_root: Hash,
+    layers: Vec<StirProofLayer>,
+    last_g_pol: Vec<M31>,
+    last_oracle_branches: Vec<Vec<Hash>>,
+
+    /// Contains all proof bytes linearized, used as a Fiat-Shamir seed
+    // TODO(alex): Remove once we switch from a makeshift hasher to a Blake2sChannel
+    legacy_proof: Vec<u8>,
+}
 
 /// Generate an STIR proof that the polynomial that has the specified
 /// values at successive powers of the specified root of unity has a
@@ -31,10 +47,7 @@ struct Proof(Vec<u8>);
 ///
 /// We use maxdeg\+1 instead of maxdeg because it's more mathematically
 /// convenient in this case.
-fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, is_fake: bool) -> Proof {
-    fn to_i128(vs: &[M31]) -> Vec<i128> {
-        vs.iter().map(|v| v.0 as i128).collect_vec()
-    }
+fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, is_fake: bool) -> StirProof {
     if is_fake {
         println!("Faking proof {} values are degree <= {}", values.len(), params.maxdeg_plus_1);
     } else {
@@ -45,7 +58,13 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
     assert_eq!(params.folding_params.len(), params.eval_sizes.len());
     assert_eq!(params.folding_params.len(), params.repetition_params.len());
 
-    let mut output = vec![];
+    let mut proof = StirProof {
+        merkle_root: [0; 32],
+        layers: vec![],
+        last_g_pol: vec![],
+        last_oracle_branches: vec![],
+        legacy_proof: vec![],
+    };
 
     let mut rt = params.root_of_unity;
     let mut vals = values.to_vec();
@@ -61,14 +80,15 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
     // Put the values into a Merkle tree. This is the root that the
     // proof will be checked against
-    let mut m = merkelize(&to_i128(&vals));
+    let mut m = merkelize(&vals);
 
     // Select a pseudo-random field element
     let mut r_fold = {
         let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(MODULUS + 1)).to_u128().unwrap();
         params.prim_root.pow(pow)
     };
-    output.extend_from_slice(&m[1]);
+    proof.legacy_proof.extend_from_slice(&m[1]);
+    proof.merkle_root = m[1].clone().try_into().expect("Incorrect merkle root length");
 
     let mut last_g_hat: Option<Vec<M31>> = None;
     let mut last_folded_len: Option<usize> = None;
@@ -132,14 +152,14 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
             params.eval_offsets[i],
             expand_factor as u32,
         );
-        let m2 = merkelize(&to_i128(&g_hat_shift));
-        output.extend_from_slice(&m2[1]);
+        let m2 = merkelize(&g_hat_shift);
+        proof.legacy_proof.extend_from_slice(&m2[1]);
 
         xs = get_power_cycle(rt, params.eval_offsets[i]);
         xs.extend(xs.iter().map(|x| x.complex_conjugate()).collect_vec());
 
         let r_outs = get_pseudorandom_element_outside_coset_circle(
-            &output,
+            &proof.legacy_proof,
             params.prim_root,
             params.eval_sizes[i],
             params.eval_offsets[i],
@@ -150,11 +170,11 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
             .iter()
             .map(|&r| inv_fft_at_point(&g_hat, rt2, p_offset, r))
             .collect_vec();
-        output.extend(to_i128(&betas).iter().flat_map(|&b| to_32_be_bytes(b)));
+        proof.legacy_proof.extend(betas.iter().flat_map(|b| to_32_be_bytes(b.0 as u128)));
 
-        r_fold = params.prim_root.pow(get_pseudorandom_indices(&output, MODULUS + 1, 1, 0, &mut vec![])[0] as u128);
-        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&output, MODULUS + 1, 1, 1, &mut vec![])[0] as u128);
-        let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
+        r_fold = params.prim_root.pow(get_pseudorandom_indices(&proof.legacy_proof, MODULUS + 1, 1, 0, &mut vec![])[0] as u128);
+        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&proof.legacy_proof, MODULUS + 1, 1, 1, &mut vec![])[0] as u128);
+        let t_vals = get_pseudorandom_indices(&proof.legacy_proof, 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         assert_eq!((params.ood_rep + params.repetition_params[i - 1]).rem_euclid(2), 0);
@@ -174,7 +194,15 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         let oracle_branches =
             make_oracle_branches(params.folding_params[i - 1], params.eval_sizes[i - 1],
                                  &t_shifts, &t_conj, folded_len, &m);
-        output.extend(oracle_branches);
+        proof.legacy_proof.extend(oracle_branches.iter().cloned().flatten().flatten().collect_vec());
+
+        let proof_layer = StirProofLayer {
+            merkle_root: m2[1].clone().try_into().expect("Incorrect merkle root length"),
+            betas,
+            oracle_branches,
+        };
+        proof.layers.push(proof_layer);
+
         m = m2;
 
         let pol = poly_utils::circ_lagrange_interp(&rs, &g_rs, false);
@@ -199,9 +227,10 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
     if !is_fake {
         assert!(g_pol[(2 * final_deg + 1)..].iter().all(|&x| x == M31::zero()));
     }
-    output.extend(to_i128(&g_pol[..(2 * final_deg + 1)]).iter().flat_map(|&c| to_32_be_bytes(c)));
+    proof.legacy_proof.extend(g_pol[..(2 * final_deg + 1)].iter().flat_map(|c| to_32_be_bytes(c.0 as u128)));
+    proof.last_g_pol = g_pol;
 
-    let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
+    let t_vals = get_pseudorandom_indices(&proof.legacy_proof, 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
     let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
     let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
 
@@ -209,9 +238,10 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         make_oracle_branches(last_folding_param,
                              params.eval_sizes.last().cloned().unwrap(),
                              &t_shifts, &t_conj, folded_len, &m);
-    output.extend(oracle_branches);
+    proof.legacy_proof.extend(oracle_branches.iter().cloned().flatten().flatten().collect_vec());
+    proof.last_oracle_branches = oracle_branches;
 
-    Proof(output)
+    proof
 }
 
 fn make_oracle_branches(
@@ -220,19 +250,19 @@ fn make_oracle_branches(
     t_shifts: &[usize],
     t_conj: &[usize],
     folded_len: usize,
-    m: &[Vec<u8>],
-) -> Vec<u8> {
+    m: &[Hash],
+) -> Vec<Vec<Hash>> {
     let mut result = vec![];
     for (&t, &k) in t_shifts.iter().zip(t_conj.iter()) {
         for j in 0..folding_param {
             let branch = mk_branch(&m, t + j * folded_len + k * eval_size);
-            result.extend(branch.into_iter().flatten())
+            result.push(branch)
         }
     }
     result
 }
 
-fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters<F>) -> bool {
+fn verify_low_degree_proof<F: StirField<M31>>(proof: &StirProof, params: &Parameters<F>) -> bool {
     macro_rules! reject_unless_eq {
         ($lhs:expr,$rhs:expr) => { if $lhs != $rhs { return false; } };
     }
@@ -250,11 +280,11 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128 / 2), F::one() * -F::one());
 
     let mut proof_pos = 0;
-    let m_root = &proof.0[proof_pos..(proof_pos + 32)];
+    let m_root = proof.merkle_root;
     proof_pos += 32;
     let mut r_fold =
         params.prim_root.pow(
-            BigInt::from_bytes_be(Sign::Plus, m_root)
+            BigInt::from_bytes_be(Sign::Plus, &m_root)
                 .rem_euclid(&BigInt::from(MODULUS + 1))
                 .to_u128().unwrap(),
         );
@@ -263,7 +293,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     let mut rs: Option<Vec<F>> = None;
     let mut zpol: Option<(Vec<M31>, Vec<M31>)> = None;
     let mut r_comb: Option<F> = None;
-    let mut m_root: Option<&[u8]> = None;
+    let mut m_root: Option<&Hash> = None;
 
     for i in 1..params.folding_params.len() {
         reject_unless_eq!(params.eval_sizes[i - 1] % params.folding_params[i - 1], 0);
@@ -277,25 +307,21 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
         let rt2 = rt_new.pow(expand_factor as u128);
         let p_offset = params.eval_offsets[i - 1].pow(params.folding_params[i - 1] as u128);
 
-        let m2_root = &proof.0[proof_pos..proof_pos + 32];
+        let layer = &proof.layers[i - 1];
+        let m2_root = &layer.merkle_root;
         proof_pos += 32;
 
         let r_outs = get_pseudorandom_element_outside_coset_circle(
-            &proof.0[..proof_pos], params.prim_root,
+            &proof.legacy_proof[..proof_pos], params.prim_root,
             params.eval_sizes[i], params.eval_offsets[i], params.ood_rep,
         );
-        let betas: Vec<M31> = (0_usize..params.ood_rep).map(|j| {
-            M31::from_u32_unchecked(
-                BigInt::from_bytes_be(Sign::Plus, &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)])
-                    .to_u32().unwrap()
-            )
-        }).collect();
+        let betas: &[M31] = &layer.betas;
         proof_pos += params.ood_rep * 32;
 
-        let r_fold_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], MODULUS + 1, 1, 0, &mut vec![])[0] as u128);
-        let r_comb_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], MODULUS + 1, 1, 1, &mut vec![])[0] as u128);
+        let r_fold_new = params.prim_root.pow(get_pseudorandom_indices(&proof.legacy_proof[..proof_pos], MODULUS + 1, 1, 0, &mut vec![])[0] as u128);
+        let r_comb_new = params.prim_root.pow(get_pseudorandom_indices(&proof.legacy_proof[..proof_pos], MODULUS + 1, 1, 1, &mut vec![])[0] as u128);
 
-        let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
+        let t_vals = get_pseudorandom_indices(&proof.legacy_proof[..proof_pos], 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
         let rs_new: Vec<F> = r_outs.iter().cloned()
@@ -306,13 +332,8 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
         // should we change to storing the log since it should always be a power of 2?
         let branch_len = (params.eval_sizes[i - 1] as f64).log2().ceil() as usize + 2;
         let num_branches = params.folding_params[i - 1] * params.repetition_params[i - 1];
-        let oracle_data: Vec<&[u8]> = (0_usize..(branch_len * num_branches)).map(|j| {
-            &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)]
-        }).collect();
         proof_pos += branch_len * num_branches * 32;
-        let oracle_branches: Vec<Vec<&[u8]>> = (0..num_branches).map(|j| {
-            oracle_data[(j * branch_len)..((j + 1) * branch_len)].to_vec()
-        }).collect();
+        let oracle_branches: &[Vec<Hash>] = &layer.oracle_branches;
 
         let rt2 = rt.pow(folded_len as u128);
         let xs2s = {
@@ -330,9 +351,9 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
                 let branch = &oracle_branches[k * params.folding_params[i - 1] + j];
                 let ind = t_shifts[k] + j * folded_len;
                 if let Some(m_root) = m_root {
-                    verify_branch(m_root, ind + t_conj[k] * params.eval_sizes[i - 1], &branch);
+                    reject_unless_eq!(verify_branch(m_root, ind + t_conj[k] * params.eval_sizes[i - 1], branch), true);
                 }
-                let val = M31::from_u32_unchecked(BigInt::from_bytes_be(Sign::Plus, branch[0])
+                let val = M31::from_u32_unchecked(BigInt::from_bytes_be(Sign::Plus, &branch[0])
                     .to_u32().unwrap());
 
                 let new_val = match pol {
@@ -364,12 +385,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     }
 
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
-    let g_pol: Vec<M31> = (0..(2 * final_deg + 1)).map(|j| {
-        M31::from_u32_unchecked(
-            BigInt::from_bytes_be(Sign::Plus, &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)])
-                .to_u32().unwrap()
-        )
-    }).collect();
+    let g_pol: Vec<M31> = proof.last_g_pol.clone();
     proof_pos += (2 * final_deg + 1) * 32;
 
     let last_eval_size = *params.eval_sizes.last().unwrap();
@@ -381,19 +397,12 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     let folded_len = last_eval_size / last_folding_param;
     let rt2 = rt.pow(last_folding_param as u128);
 
-    let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
+    let t_vals = get_pseudorandom_indices(&proof.legacy_proof[..proof_pos], 2 * folded_len as u32, params.repetition_params.last().cloned().unwrap(), 0, &mut vec![]);
     let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
     let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
 
     // Warning: code below copy-and-pasted from inside main loop
-    let branch_len = (last_eval_size as f64).log2().ceil() as usize + 2;
-    let num_branches = last_folding_param * last_repetition_param;
-    let oracle_data: Vec<&[u8]> =
-        (0..(branch_len * num_branches)).map(|j| &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)]).collect();
-    // proof_pos += branch_len * num_branches * 32;
-    let oracle_branches: Vec<Vec<&[u8]>> = (0..num_branches).map(|j| {
-        oracle_data[(j * branch_len)..((j + 1) * branch_len)].to_vec()
-    }).collect();
+    let oracle_branches = &proof.last_oracle_branches;
 
     let rs = rs.as_ref().unwrap();
 
@@ -411,9 +420,9 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
         for j in 0..last_folding_param {
             let branch = &oracle_branches[k * last_folding_param + j];
             let ind = t_shifts[k] + j * folded_len;
-            verify_branch(m_root.as_ref().unwrap(), ind + t_conj[k] * last_eval_size, branch);
+            reject_unless_eq!(verify_branch(m_root.unwrap(), ind + t_conj[k] * last_eval_size, branch), true);
             let val = M31::from_u32_unchecked(
-                BigInt::from_bytes_be(Sign::Plus, branch[0])
+                BigInt::from_bytes_be(Sign::Plus, &branch[0])
                     .to_u32().unwrap()
             );
 
