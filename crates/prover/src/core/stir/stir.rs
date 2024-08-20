@@ -3,7 +3,7 @@
 
 use itertools::Itertools;
 use num_bigint::{BigInt, Sign};
-use num_traits::{Euclid, ToPrimitive, Zero};
+use num_traits::{ToPrimitive, Zero};
 use crate::core::fields::{ComplexConjugate};
 use super::*;
 use super::fft::*;
@@ -19,7 +19,6 @@ struct Parameters<T> {
     eval_sizes: Vec<usize>,
     repetition_params: Vec<usize>,
     ood_rep: usize,
-    modulus: u32,
     prim_root: T,
 }
 
@@ -67,7 +66,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
     // Select a pseudo-random field element
     let mut r_fold = {
-        let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(params.modulus + 1)).to_u128().unwrap();
+        let pow = BigInt::from_bytes_be(Sign::Plus, &m[1]).rem_euclid(&BigInt::from(MODULUS + 1)).to_u128().unwrap();
         params.prim_root.pow(pow)
     };
     output.extend_from_slice(&m[1]);
@@ -129,7 +128,6 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
         let g_hat_shift = shift_domain(
             &g_hat,
-            params.modulus,
             rt,
             p_offset,
             params.eval_offsets[i],
@@ -143,7 +141,6 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
         let r_outs = get_pseudorandom_element_outside_coset_circle(
             &output,
-            params.modulus,
             params.prim_root,
             params.eval_sizes[i],
             params.eval_offsets[i],
@@ -152,12 +149,12 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
         let betas: Vec<M31> = r_outs
             .iter()
-            .map(|&r| inv_fft_at_point(&g_hat, params.modulus, rt2, p_offset, r))
+            .map(|&r| inv_fft_at_point(&g_hat, rt2, p_offset, r))
             .collect_vec();
         output.extend(to_i128(&betas).iter().flat_map(|&b| to_32_be_bytes(b)));
 
-        r_fold = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 0, &mut vec![])[0] as u128);
-        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&output, params.modulus + 1, 1, 1, &mut vec![])[0] as u128);
+        r_fold = params.prim_root.pow(get_pseudorandom_indices(&output, MODULUS + 1, 1, 0, &mut vec![])[0] as u128);
+        let r_comb = params.prim_root.pow(get_pseudorandom_indices(&output, MODULUS + 1, 1, 1, &mut vec![])[0] as u128);
         let t_vals = get_pseudorandom_indices(&output, 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
         let t_conj = t_vals.iter().map(|&t| t.rem_euclid(2)).collect_vec();
@@ -196,7 +193,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
     let folded_len = last_folded_len.unwrap();
     let last_folding_param = params.folding_params.last().cloned().unwrap();
     let last_eval_offset = params.eval_offsets.last().cloned().unwrap();
-    let g_pol = fft(&g_hat, params.modulus,
+    let g_pol = fft(&g_hat,
                     rt.pow(last_folding_param as u128),
                     last_eval_offset.pow(last_folding_param as u128));
     let final_deg = params.maxdeg_plus_1 as usize / params.folding_params.iter().product::<usize>();
@@ -251,7 +248,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     let mut rt = params.root_of_unity;
 
     reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128), F::one());
-    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128 / 2), F::one() * (params.modulus - 1));
+    reject_unless_eq!(rt.pow(params.eval_sizes[0] as u128 / 2), F::one() * -F::one());
 
     let mut proof_pos = 0;
     let m_root = &proof.0[proof_pos..(proof_pos + 32)];
@@ -259,7 +256,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     let mut r_fold =
         params.prim_root.pow(
             BigInt::from_bytes_be(Sign::Plus, m_root)
-                .rem_euclid(&BigInt::from(params.modulus + 1))
+                .rem_euclid(&BigInt::from(MODULUS + 1))
                 .to_u128().unwrap(),
         );
 
@@ -285,20 +282,19 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
         proof_pos += 32;
 
         let r_outs = get_pseudorandom_element_outside_coset_circle(
-            &proof.0[..proof_pos], params.modulus, params.prim_root,
+            &proof.0[..proof_pos], params.prim_root,
             params.eval_sizes[i], params.eval_offsets[i], params.ood_rep,
         );
         let betas: Vec<M31> = (0_usize..params.ood_rep).map(|j| {
             M31::from_u32_unchecked(
                 BigInt::from_bytes_be(Sign::Plus, &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)])
-                    .rem_euclid(&BigInt::from(params.modulus))
                     .to_u32().unwrap()
             )
         }).collect();
         proof_pos += params.ood_rep * 32;
 
-        let r_fold_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 0, &mut vec![])[0] as u128);
-        let r_comb_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], params.modulus + 1, 1, 1, &mut vec![])[0] as u128);
+        let r_fold_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], MODULUS + 1, 1, 0, &mut vec![])[0] as u128);
+        let r_comb_new = params.prim_root.pow(get_pseudorandom_indices(&proof.0[..proof_pos], MODULUS + 1, 1, 1, &mut vec![])[0] as u128);
 
         let t_vals = get_pseudorandom_indices(&proof.0[..proof_pos], 2 * folded_len as u32, params.repetition_params[i - 1], 2, &mut vec![]);
         let t_shifts = t_vals.iter().map(|&t| t / 2).collect_vec();
@@ -338,7 +334,6 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
                     verify_branch(m_root, ind + t_conj[k] * params.eval_sizes[i - 1], &branch);
                 }
                 let val = M31::from_u32_unchecked(BigInt::from_bytes_be(Sign::Plus, branch[0])
-                    .rem_euclid(&BigInt::from(params.modulus))
                     .to_u32().unwrap());
 
                 let new_val = match pol {
@@ -373,7 +368,6 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
     let g_pol: Vec<M31> = (0..(2 * final_deg + 1)).map(|j| {
         M31::from_u32_unchecked(
             BigInt::from_bytes_be(Sign::Plus, &proof.0[(proof_pos + j * 32)..(proof_pos + (j + 1) * 32)])
-                .rem_euclid(&BigInt::from(params.modulus))
                 .to_u32().unwrap()
         )
     }).collect();
@@ -421,7 +415,6 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
             verify_branch(m_root.as_ref().unwrap(), ind + t_conj[k] * last_eval_size, branch);
             let val = M31::from_u32_unchecked(
                 BigInt::from_bytes_be(Sign::Plus, branch[0])
-                    .rem_euclid(&BigInt::from(params.modulus))
                     .to_u32().unwrap()
             );
 
@@ -432,7 +425,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
         }
 
         reject_unless_eq!(poly_utils::eval_circ_poly_at(&poly_utils::circ_lagrange_interp(&xs2s[t_conj[k]], &vals, true), &(r_fold * x0.complex_conjugate())),
-                          fft_inv(&g_pol, params.modulus, F::one(),
+                          fft_inv(&g_pol, F::one(),
                                   conjugate_with_parity(rt2.pow(t_shifts[k] as u128) * last_eval_offset.pow(last_folding_param as u128),
                                                         t_conj[k]))[0]);
     }
@@ -443,16 +436,15 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &Proof, params: &Parameters
 
 fn get_pseudorandom_element_outside_coset_circle<B, F: StirField<B>>(
     seed: &[u8],
-    modulus: u32,
     prim_root: F,
     coset_size: usize,
     shift: F,
     count: usize,
 ) -> Vec<F> {
     let adjust = 1;
-    let m2 = modulus + 1;
-    assert_eq!((modulus as i128 + adjust) % (coset_size as i128), 0);
-    let cofactor = (modulus as i128 + adjust) / (coset_size as i128);
+    let m2 = MODULUS + 1;
+    assert_eq!((MODULUS as i128 + adjust) % (coset_size as i128), 0);
+    let cofactor = (MODULUS as i128 + adjust) / (coset_size as i128);
     let mut exclude = vec![];
     let mut ans = vec![];
     let mut start = 0;
@@ -480,22 +472,21 @@ fn conjugate_with_parity<F: ComplexConjugate>(f: F, parity: usize) -> F {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::fields::{m31, FieldExpOps};
+    use crate::core::fields::FieldExpOps;
     use super::super::fft::fft_inv;
     use super::*;
 
     #[test]
     fn test_circle_stir() {
-        const MODULUS: u32 = m31::P;
         let prim_root = CM31::new(311014874, 1584694829);
         let root_of_unity = prim_root.pow(((MODULUS + 1) / 2_u32.pow(10 + 2)) as u128);
         let log_d = 10;
-        let params = generate_parameters::<M31, CM31>(MODULUS, prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
+        let params = generate_parameters::<M31, CM31>(prim_root, root_of_unity, prim_root, log_d, 128, 4, 1.0, 3);
         println!("{:?}", params);
 
         // Pure STIR tests
         let poly: Vec<M31> = (0..2_u32.pow(log_d + 1)).map(|v| v.into()).collect();
-        let evaluations = fft_inv(&poly, MODULUS, root_of_unity, prim_root);
+        let evaluations = fft_inv(&poly, root_of_unity, prim_root);
         let proof = prove_low_degree(&evaluations, &params, false);
         assert!(verify_low_degree_proof(&proof, &params));
 
@@ -511,7 +502,6 @@ mod tests {
     }
 
     fn generate_parameters<B, F: StirField<B>>(
-        modulus: u32,
         prim_root: F,
         root_of_unity: F,
         init_offset: F,
@@ -544,7 +534,6 @@ mod tests {
             eval_sizes,
             repetition_params: vec![3; m + 1],
             ood_rep: 1,
-            modulus,
             prim_root,
         }
     }

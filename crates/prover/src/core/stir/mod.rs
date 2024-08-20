@@ -1,6 +1,5 @@
 //! This module contains the core STIR implementation adapted from Python PoC made by Nethermind.
 
-use std::ops::Mul;
 use blake2::{Blake2s256, Digest};
 use num_bigint::{BigInt, Sign};
 use num_traits::{Euclid, ToPrimitive};
@@ -15,14 +14,16 @@ mod fft;
 mod merkle_trees;
 mod poly_utils;
 
+const MODULUS: u32 = m31::P;
+
 trait Xy<F> {
     fn x(&self) -> F;
     fn y(&self) -> F;
 }
 
-trait StirField<B>: Field + Xy<B> + Mul<u32, Output = Self> {}
+trait StirField<B>: Field + Xy<B> {}
 
-impl<B, F> StirField<B> for F where F: Field + Xy<B> + Mul<u32, Output = F> {}
+impl<B, F> StirField<B> for F where F: Field + Xy<B> {}
 
 fn to_32_be_bytes(x: i128) -> [u8; 32] {
     let mut res = [0; 32];
@@ -78,21 +79,12 @@ fn get_power_cycle<B, F: StirField<B>>(r: F, offset: F) -> Vec<F> {
         }
         o.push(next);
     }
-
     o
 }
 
 impl CM31 {
     pub fn new(x: u64, y: u64) -> Self {
         Self(M31(x.rem_euclid(m31::P as u64) as u32), M31(y.rem_euclid(m31::P as u64) as u32))
-    }
-}
-
-impl Mul<u32> for CM31 {
-    type Output = Self;
-
-    fn mul(self, rhs: u32) -> Self::Output {
-        self * M31(rhs)
     }
 }
 
