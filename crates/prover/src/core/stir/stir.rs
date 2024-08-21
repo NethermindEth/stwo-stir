@@ -88,7 +88,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         params.prim_root.pow(pow)
     };
     proof.legacy_proof.extend_from_slice(&m[0][0]);
-    proof.merkle_root = m[0][0].clone().try_into().expect("Incorrect merkle root length");
+    proof.merkle_root = m[0][0];
 
     let mut last_g_hat: Option<Vec<M31>> = None;
     let mut last_folded_len: Option<usize> = None;
@@ -104,21 +104,20 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         let xs2s = {
             let mut res = vec![get_power_cycle(rt2, F::one())];
             res.push(res[0].clone());
-            (&mut res[1][1..]).reverse();
+            res[1][1..].reverse();
             res
         };
 
         let x_polys: Vec<(Vec<M31>, Vec<M31>)> =
             (0..=1).flat_map(|l| {
                 (0..folded_len).map(|k| {
-                    let temp = poly_utils::circ_lagrange_interp(
+                    poly_utils::circ_lagrange_interp(
                         &xs2s[l],
                         &(0..params.folding_params[i - 1])
                             .map(|j| vals[k + folded_len * j + params.eval_sizes[i - 1] * l])
                             .collect_vec(),
                         true,
-                    );
-                    temp
+                    )
                 }).collect_vec()
             }).collect_vec();
 
@@ -190,10 +189,10 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         let oracle_branches =
             make_oracle_branches(params.folding_params[i - 1], params.eval_sizes[i - 1],
                                  &t_shifts, &t_conj, folded_len, &m);
-        proof.legacy_proof.extend(oracle_branches.iter().cloned().flatten().flatten().collect_vec());
+        proof.legacy_proof.extend(oracle_branches.iter().flatten().flatten().cloned().collect_vec());
 
         let proof_layer = StirProofLayer {
-            merkle_root: m2[0][0].clone(),
+            merkle_root: m2[0][0],
             betas: betas.clone(),
             oracle_branches,
         };
@@ -238,7 +237,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         make_oracle_branches(last_folding_param,
                              params.eval_sizes.last().cloned().unwrap(),
                              &t_shifts, &t_conj, folded_len, &m);
-    proof.legacy_proof.extend(oracle_branches.iter().cloned().flatten().flatten().collect_vec());
+    proof.legacy_proof.extend(oracle_branches.iter().flatten().flatten().cloned().collect_vec());
     proof.last_oracle_branches = oracle_branches;
 
     proof
@@ -255,7 +254,7 @@ fn make_oracle_branches(
     let mut result = vec![];
     for (&t, &k) in t_shifts.iter().zip(t_conj.iter()) {
         for j in 0..folding_param {
-            let branch = mk_branch(&m, t + j * folded_len + k * eval_size);
+            let branch = mk_branch(m, t + j * folded_len + k * eval_size);
             result.push(branch)
         }
     }
@@ -335,7 +334,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &StirProof, params: &Parame
         let xs2s = {
             let mut res = vec![get_power_cycle(rt2, F::one())];
             res.push(res[0].clone());
-            (&mut res[1][1..]).reverse();
+            res[1][1..].reverse();
             res
         };
 
@@ -404,7 +403,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &StirProof, params: &Parame
     let xs2s = {
         let mut res = vec![get_power_cycle(rt3, F::one())];
         res.push(res[0].clone());
-        (&mut res[1][1..]).reverse();
+        res[1][1..].reverse();
         res
     };
 
@@ -419,7 +418,7 @@ fn verify_low_degree_proof<F: StirField<M31>>(proof: &StirProof, params: &Parame
 
             let x = conjugate_with_parity(rt.pow(ind as u128) * last_eval_offset, t_conj[k]);
             vals.push((
-                (val - poly_utils::eval_circ_poly_at(&pol.as_ref().unwrap(), &x)) / poly_utils::eval_circ_poly_at(zpol.as_ref().unwrap(), &x)
+                (val - poly_utils::eval_circ_poly_at(pol.as_ref().unwrap(), &x)) / poly_utils::eval_circ_poly_at(zpol.as_ref().unwrap(), &x)
             ) * poly_utils::geom_sum((x * r_comb.unwrap()).x(), rs.len() as u64));
         }
 

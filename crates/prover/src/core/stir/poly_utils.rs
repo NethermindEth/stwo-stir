@@ -8,7 +8,7 @@ pub fn geom_sum(x: M31, p: u64) -> M31 {
     let mut ans = M31::one();
     let mut prod = M31::one();
     for _ in 0..p {
-        prod = prod * x;
+        prod *= x;
         ans += prod;
     }
     ans
@@ -19,7 +19,7 @@ pub fn eval_poly_at(p: &[M31], x: M31) -> M31 {
     let mut y = M31::zero();
     let mut power_of_x = M31::one();
     for &p_coeff in p {
-        y = y + power_of_x * p_coeff;
+        y += power_of_x * p_coeff;
         power_of_x *= x;
     }
     y

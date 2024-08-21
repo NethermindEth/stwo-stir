@@ -25,12 +25,12 @@ pub fn mk_branch(tree: &[Vec<Hash>], index: usize) -> Vec<Hash> {
     let mut index = index;
     let mut o = Vec::with_capacity(tree.len());
     let leaf_layer = tree.last().unwrap();
-    o.push(leaf_layer[index].clone());
-    o.push(leaf_layer[index ^ 1].clone());
+    o.push(leaf_layer[index]);
+    o.push(leaf_layer[index ^ 1]);
     // Non-root intermediate layers
     for layer in tree[1..(tree.len() - 1)].iter().rev() {
         index /= 2;
-        o.push(layer[index ^ 1].clone());
+        o.push(layer[index ^ 1]);
     }
     o
 }
@@ -38,7 +38,7 @@ pub fn mk_branch(tree: &[Vec<Hash>], index: usize) -> Vec<Hash> {
 #[must_use]
 pub fn verify_branch(root: &Hash, index: usize, proof: &[Hash]) -> bool {
     let mut index = index + 2_usize.pow(proof.len() as u32);
-    let mut v = proof[0].clone();
+    let mut v = proof[0];
     for &p in &proof[1..] {
         if index % 2 == 0 {
             v = blake_pair(&v, &p);
