@@ -84,11 +84,11 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
 
     // Select a pseudo-random field element
     let mut r_fold = {
-        let pow = (BigUint::from_bytes_be(&m[1]) % BigUint::from(MODULUS + 1)).to_u128().unwrap();
+        let pow = (BigUint::from_bytes_be(&m[0][0]) % BigUint::from(MODULUS + 1)).to_u128().unwrap();
         params.prim_root.pow(pow)
     };
-    proof.legacy_proof.extend_from_slice(&m[1]);
-    proof.merkle_root = m[1].clone().try_into().expect("Incorrect merkle root length");
+    proof.legacy_proof.extend_from_slice(&m[0][0]);
+    proof.merkle_root = m[0][0].clone().try_into().expect("Incorrect merkle root length");
 
     let mut last_g_hat: Option<Vec<M31>> = None;
     let mut last_folded_len: Option<usize> = None;
@@ -153,7 +153,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
             expand_factor as u32,
         );
         let m2 = merkelize(&g_hat_shift);
-        proof.legacy_proof.extend_from_slice(&m2[1]);
+        proof.legacy_proof.extend_from_slice(&m2[0][0]);
 
         xs = get_power_cycle(rt, params.eval_offsets[i]);
         xs.extend(xs.iter().map(|x| x.complex_conjugate()).collect_vec());
@@ -193,7 +193,7 @@ fn prove_low_degree<F: StirField<M31>>(values: &[M31], params: &Parameters<F>, i
         proof.legacy_proof.extend(oracle_branches.iter().cloned().flatten().flatten().collect_vec());
 
         let proof_layer = StirProofLayer {
-            merkle_root: m2[1].clone().try_into().expect("Incorrect merkle root length"),
+            merkle_root: m2[0][0].clone(),
             betas: betas.clone(),
             oracle_branches,
         };
@@ -250,7 +250,7 @@ fn make_oracle_branches(
     t_shifts: &[usize],
     t_conj: &[usize],
     folded_len: usize,
-    m: &[Hash],
+    m: &[Vec<Hash>],
 ) -> Vec<Vec<Hash>> {
     let mut result = vec![];
     for (&t, &k) in t_shifts.iter().zip(t_conj.iter()) {
