@@ -1,8 +1,8 @@
 //! This module contains the core STIR implementation adapted from Python PoC made by Nethermind.
 
 use blake2::{Blake2s256, Digest};
-use num_bigint::{BigInt, Sign};
-use num_traits::{Euclid, ToPrimitive};
+use num_bigint::BigUint;
+use num_traits::ToPrimitive;
 use crate::core::fields::cm31::CM31;
 use crate::core::fields::{m31, Field};
 use crate::core::fields::m31::M31;
@@ -49,11 +49,10 @@ fn get_pseudorandom_indices(
     for c in start..(count + start) {
         exclude.sort();
         let exclude2: Vec<usize> = exclude.iter().enumerate().map(|(i, &x)| x - i).collect();
-        let val = BigInt::from_bytes_be(
-            Sign::Plus,
-            &blake(&[&to_32_be_bytes(c as u128), seed].concat()),
-        ).rem_euclid(
-            &BigInt::from(modulus - exclude.len() as u32)
+        let val = (
+            BigUint::from_bytes_be(
+                &blake(&[&to_32_be_bytes(c as u128), seed].concat()),
+            ) % BigUint::from(modulus - exclude.len() as u32)
         ).to_usize().unwrap();
         let bisection_point = match exclude2.binary_search(&val) {
             Ok(mut i) => {
